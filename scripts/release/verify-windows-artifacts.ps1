@@ -86,8 +86,7 @@ $stagedPayloadNames = @(
     'PROVENANCE.json',
     'README.md',
     'RELEASE_NOTES.md',
-    'SBOM.spdx.json',
-    'SECURITY.md'
+    'SBOM.spdx.json'
 )
 $stagedNames = @(Get-ChildItem -LiteralPath $staging -File | Select-Object -ExpandProperty Name | Sort-Object)
 $expectedStagedNames = @(($stagedPayloadNames + @('SHA256SUMS.txt')) | Sort-Object)
@@ -152,7 +151,6 @@ $sourceCopies = [ordered]@{
     'PRODUCT_NOTICES.md' = 'THIRD_PARTY_NOTICES.md'
     'README.md' = 'docs\beta-user-guide.md'
     'RELEASE_NOTES.md' = "docs\release-notes\$version-beta.md"
-    'SECURITY.md' = 'SECURITY.md'
 }
 foreach ($copy in $sourceCopies.GetEnumerator()) {
     $stagedHash = Get-LowerSha256 -Path (Join-Path $staging $copy.Key)

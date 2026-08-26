@@ -110,6 +110,8 @@ version 3 or (at your option) any later version. See `COPYRIGHT.md` and
 dependencies, and public GitHub releases include source archives for the
 corresponding revision.
 
-See `SECURITY.md` for private vulnerability reporting. Starsector is created
-by Fractal Softworks; Ludd’s Blessing is an independent community tool and does
-not include Starsector or mod assets.
+Suspected vulnerabilities can be reported privately through
+[GitHub's private vulnerability reporting form](https://github.com/unixfg/ludds-blessing/security/advisories/new).
+
+Starsector is created by Fractal Softworks; Ludd’s Blessing is an independent
+community tool and does not include Starsector or mod assets.

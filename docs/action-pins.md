@@ -5,7 +5,7 @@ comment is the human-readable release that was reviewed. Dependabot may propose
 updates, but a maintainer must verify the new tag and commit in the action’s
 official repository before merging.
 
-Pins reviewed on 2026-08-24:
+Pins reviewed on 2026-08-26:
 
 | Action | Release | Full commit SHA | Official verification |
 | --- | --- | --- | --- |
@@ -17,7 +17,7 @@ Pins reviewed on 2026-08-24:
 | `pnpm/action-setup` | `v6.0.10` | `0977fd99725f1db4007ccb2928dbb4e90d06cc86` | [release commit](https://github.com/pnpm/action-setup/commit/0977fd99725f1db4007ccb2928dbb4e90d06cc86) |
 | `Swatinem/rust-cache` | `v2.9.2` | `6323deb102c322ba6fcbdcafc7e3dddab59af2b6` | [release commit](https://github.com/Swatinem/rust-cache/commit/6323deb102c322ba6fcbdcafc7e3dddab59af2b6) |
 | `anchore/sbom-action` | `v0.24.0` | `e22c389904149dbc22b58101806040fa8d37a610` | [release commit](https://github.com/anchore/sbom-action/commit/e22c389904149dbc22b58101806040fa8d37a610) |
-| `softprops/action-gh-release` | `v3.0.0` | `b4309332981a82ec1c5618f44dd2e27cc8bfbfda` | [release commit](https://github.com/softprops/action-gh-release/commit/b4309332981a82ec1c5618f44dd2e27cc8bfbfda) |
+| `softprops/action-gh-release` | `v3.0.2` | `3d0d9888cb7fd7b750713d6e236d1fcb99157228` | [release commit](https://github.com/softprops/action-gh-release/commit/3d0d9888cb7fd7b750713d6e236d1fcb99157228) |
 
 The Rust compiler and components are not installed through an action. They are
 pinned directly in `rust-toolchain.toml` so local development, CI, and release

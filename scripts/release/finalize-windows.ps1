@@ -17,7 +17,6 @@ $requiredPatterns = @(
     'DEPENDENCY_NOTICES.md',
     'COPYRIGHT.md',
     'LICENSE.md',
-    'SECURITY.md',
     'README.md',
     'RELEASE_NOTES.md',
     'PROVENANCE.json',

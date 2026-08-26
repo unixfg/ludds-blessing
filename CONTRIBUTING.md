@@ -10,8 +10,8 @@ credential, signing key, or personally identifying filesystem path. Build the
 smallest synthetic reproduction you can, and use the application’s redacted
 diagnostics export when reporting behavior.
 
-Report suspected vulnerabilities through the private process in
-`SECURITY.md`, not through a public issue.
+Use [GitHub's private vulnerability reporting form](https://github.com/unixfg/ludds-blessing/security/advisories/new)
+rather than opening a public issue for a suspected vulnerability.
 
 ## Development checks
 

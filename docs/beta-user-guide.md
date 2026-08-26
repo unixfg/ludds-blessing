@@ -21,7 +21,7 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 
 - `*-installer.exe` is the per-user NSIS installer.
 - `*-portable.exe` runs without installation. Keep its application-data backup directory when moving or removing it.
-- The `.zip` contains both binaries, the copyright notice, GPL license, security policy,
+- The `.zip` contains both binaries, the copyright notice, GPL license,
   notices, descriptive provenance, the source/build SBOM, and an internal
   checksum manifest.
 
@@ -128,4 +128,4 @@ Compare the displayed hash with `LuddsBlessing_0.2.0_windows-x64-SHA256SUMS.txt`
 
 ## Beta acceptance checks
 
-Before trusting an edited copy, load it in Starsector `0.98a-RC8`, inspect the changed values and cargo-space totals, earn additional XP when progression was changed, save again in-game, and reopen that new save in the editor. Report a failure with the redacted diagnostics export; do not attach a save publicly unless every owner of its contents has approved sharing it.
+Before trusting an edited copy, load it in Starsector `0.98a-RC8`, inspect the changed values and cargo-space totals, earn additional XP when progression was changed, save again in-game, and reopen that new save in the editor. Report a failure with the redacted diagnostics export; do not attach a save publicly unless every owner of its contents has approved sharing it. Report a suspected vulnerability privately through [GitHub's reporting form](https://github.com/unixfg/ludds-blessing/security/advisories/new), not in a public issue.

@@ -90,7 +90,6 @@ $required = @(
     'pnpm-lock.yaml',
     'COPYRIGHT.md',
     'LICENSE.md',
-    'SECURITY.md',
     'THIRD_PARTY_NOTICES.md',
     'docs\action-pins.md',
     'docs\beta-user-guide.md',

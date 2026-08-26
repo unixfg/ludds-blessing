@@ -66,7 +66,6 @@ Copy-Item -LiteralPath $installerCandidates[0].FullName -Destination (Join-Path 
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $stagingDirectory 'PRODUCT_NOTICES.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'COPYRIGHT.md') -Destination (Join-Path $stagingDirectory 'COPYRIGHT.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE.md') -Destination (Join-Path $stagingDirectory 'LICENSE.md')
-Copy-Item -LiteralPath (Join-Path $repoRoot 'SECURITY.md') -Destination (Join-Path $stagingDirectory 'SECURITY.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\beta-user-guide.md') -Destination (Join-Path $stagingDirectory 'README.md')
 $releaseNotes = Join-Path $repoRoot "docs\release-notes\$version-beta.md"
 if (-not (Test-Path -LiteralPath $releaseNotes -PathType Leaf)) {

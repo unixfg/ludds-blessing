@@ -8,12 +8,12 @@ on:
         required: true
         type: string
       tag:
-        description: Candidate tag used by that workflow run
+        description: Beta tag used by that workflow run (for example vX.Y.Z-beta.1)
         required: true
         type: string
 
 concurrency:
-  group: promote-windows-${{ inputs.tag }}
+  group: windows-beta-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 permissions:
@@ -35,14 +35,20 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXPECTED_WORKFLOW_PATH: .github/workflows/release-windows.yml
+          PROMOTION_REF_NAME: ${{ github.ref_name }}
+          PROMOTION_REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
+          [[ "$PROMOTION_REF_TYPE" == 'branch' && "$PROMOTION_REF_NAME" == "$DEFAULT_BRANCH" ]] || {
+            echo "Promotion itself must be dispatched from the repository default branch, $DEFAULT_BRANCH." >&2
+            exit 1
+          }
           [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
             echo 'candidate_run_id must contain only a non-zero decimal workflow run ID.' >&2
             exit 1
           }
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*$ ]] || {
-            echo 'tag must be a semantic-version prerelease tag.' >&2
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]] || {
+            echo 'tag must be a numbered beta tag such as v0.2.0-beta.1.' >&2
             exit 1
           }
 
@@ -118,20 +124,41 @@ jobs:
             -Repository $env:GITHUB_REPOSITORY `
             -WorkflowRunId $env:CANDIDATE_RUN_ID
 
-      - name: Reject an existing tag at a different commit
+      - name: Revalidate the source branch and any existing tag
         shell: bash
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RELEASE_TAG: ${{ inputs.tag }}
           SOURCE_COMMIT: ${{ steps.candidate.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
-            tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          git fetch --no-tags origin \
+            "refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH" || {
+            echo "The accepted candidate is no longer on $DEFAULT_BRANCH." >&2
+            exit 1
+          }
+
+          if git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            tag_commit="$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")"
             [[ "$tag_commit" == "$SOURCE_COMMIT" ]] || {
               echo "Existing tag $RELEASE_TAG points to $tag_commit, not accepted candidate $SOURCE_COMMIT." >&2
               exit 1
             }
           fi
+
+      - name: Resolve release assets
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t staging_directories < <(find artifacts -mindepth 1 -maxdepth 1 -type d -name 'LuddsBlessing_*_windows-x64')
+          [[ ${#staging_directories[@]} -eq 1 ]] || {
+            echo 'The verified artifact must contain exactly one staging directory.' >&2
+            exit 1
+          }
+          echo "staging=${staging_directories[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Reject an existing release
         shell: bash
@@ -140,11 +167,15 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set +e
-          response="$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1)"
+          response="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1)"
           api_status=$?
           set -e
           if [[ $api_status -eq 0 ]]; then
-            echo "A GitHub release already exists for $RELEASE_TAG; refusing to add or replace assets." >&2
+            if jq -e '.draft == true' <<<"$response" >/dev/null; then
+              echo "Reusing the existing unpublished draft for $RELEASE_TAG."
+              exit 0
+            fi
+            echo "A published GitHub release already exists for $RELEASE_TAG; refusing to alter it." >&2
             exit 1
           fi
           grep -Eq '(HTTP[/0-9. ]+404|HTTP 404)' <<<"$response" || {
@@ -153,19 +184,73 @@ jobs:
             exit 1
           }
 
-      - name: Create GitHub prerelease from the accepted artifact
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+      - name: Create or repair the unpublished draft and upload every asset
+        id: draft
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.tag }}
           target_commitish: ${{ steps.candidate.outputs.source_sha }}
           name: Ludd's Blessing ${{ inputs.tag }}
+          draft: true
           prerelease: true
           make_latest: false
           generate_release_notes: false
           body_path: ${{ steps.metadata.outputs.notes }}
           fail_on_unmatched_files: true
-          overwrite_files: false
+          overwrite_files: true
           files: |
             artifacts/LuddsBlessing_*_windows-x64/*
             artifacts/*.zip
             artifacts/*-SHA256SUMS.txt
+
+      - name: Verify every draft asset, then publish the prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          STAGING_DIRECTORY: ${{ steps.assets.outputs.staging }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'The release action did not return a valid draft release ID.' >&2
+            exit 1
+          }
+
+          expected_assets="$(mktemp)"
+          actual_assets="$(mktemp)"
+          find "$STAGING_DIRECTORY" -maxdepth 1 -type f -print0 \
+            | while IFS= read -r -d '' asset; do
+                printf '%s\t%s\n' "$(basename "$asset")" "$(stat -c '%s' "$asset")"
+              done > "$expected_assets"
+          find artifacts -maxdepth 1 -type f \
+              \( -name '*.zip' -o -name '*-SHA256SUMS.txt' \) -print0 \
+            | while IFS= read -r -d '' asset; do
+                printf '%s\t%s\n' "$(basename "$asset")" "$(stat -c '%s' "$asset")"
+              done >> "$expected_assets"
+          sort -o "$expected_assets" "$expected_assets"
+          [[ -z "$(cut -f1 "$expected_assets" | uniq -d)" ]] || {
+            echo 'Release asset names must be unique.' >&2
+            exit 1
+          }
+
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.draft == true and .prerelease == true and .tag_name == $tag' \
+            <<<"$release_json" >/dev/null || {
+              echo 'The uploaded release is not the expected unpublished prerelease.' >&2
+              exit 1
+            }
+          jq -r '.assets[] | [.name, (.size | tostring)] | @tsv' \
+            <<<"$release_json" | sort > "$actual_assets"
+          diff -u "$expected_assets" "$actual_assets"
+
+          published="$(gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -F prerelease=true \
+            -f make_latest=false)"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.draft == false and .prerelease == true and .tag_name == $tag' \
+            <<<"$published" >/dev/null
+          echo "Published $(jq -r '.html_url' <<<"$published")"
