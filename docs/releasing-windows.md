@@ -46,6 +46,7 @@ With the Tauri Windows prerequisites, Node.js 24.19.0, pnpm 11.19.0, the pinned 
 pnpm install --frozen-lockfile
 pnpm audit --prod --audit-level high
 pnpm test
+cargo fetch --locked
 cargo fmt --all -- --check
 cargo audit
 cargo test --workspace --all-targets --locked

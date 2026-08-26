@@ -108,6 +108,8 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Fetch the complete locked Rust graph for offline notices
+        run: cargo fetch --locked
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Verify release metadata and repository hygiene
