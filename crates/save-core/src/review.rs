@@ -610,10 +610,7 @@ fn reject_duplicate_cargo_edit_targets(edits: &[Edit]) -> Result<()> {
             )),
             Edit::AddStorageStack {
                 colony_id, item, ..
-            } => Some(CargoEditTarget::NewStorage(
-                colony_id.clone(),
-                item.clone(),
-            )),
+            } => Some(CargoEditTarget::NewStorage(colony_id.clone(), item.clone())),
             Edit::AddColonyResourceStack {
                 colony_id,
                 commodity_id,
