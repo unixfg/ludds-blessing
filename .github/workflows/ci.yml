@@ -102,11 +102,11 @@ jobs:
         shell: pwsh
         run: |
           cargo test --locked -p ludds-blessing --test bindings export_ipc_bindings
-          if (git diff --exit-code -- src-tauri/bindings) {
-            Write-Host 'Generated IPC bindings are current.'
-          } else {
+          git diff --exit-code -- src-tauri/bindings
+          if ($LASTEXITCODE -ne 0) {
             throw 'Run the ts-rs binding export test and commit src-tauri/bindings.'
           }
+          Write-Host 'Generated IPC bindings are current.'
       - name: Lint the Tauri shell
         run: cargo clippy --locked -p ludds-blessing --all-targets -- -D warnings
 
