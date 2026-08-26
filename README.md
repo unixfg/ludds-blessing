@@ -55,11 +55,9 @@ Do not place real saves or game assets inside the repository. Use the ignored
 `testdata-local/` directory for private regression fixtures.
 
 The supplied local RC8 fixture is exercised only by an ignored, explicitly
-opt-in read-only smoke test. A release still requires the documented in-game
-acceptance pass; passing automated tests alone is not a claim that Starsector
-will load every modded save.
+opt-in read-only developer test.
 
-## Current beta editing boundary
+## Current editing boundary
 
 - Existing player cargo, colony Storage, and colony Local Resources quantities
   can be adjusted when uniquely recognized in the selected installation.
@@ -106,11 +104,9 @@ discarded rather than accumulating for the lifetime of the app.
 
 Ludd’s Blessing is free software licensed under the GNU General Public License,
 version 3 or (at your option) any later version. See `COPYRIGHT.md` and
-`LICENSE.md`. A Windows release has one standalone executable and no installer.
-The same GitHub release page provides source archives for the corresponding
-tag. Retained release candidates include the SBOM, provenance, notices, and
-checksum manifests used during review; those review files are not separate
-public downloads.
+`LICENSE.md`. Pushing a stable version tag automatically builds and publishes
+one standalone Windows executable with no installer. The same GitHub release
+page provides source archives for the corresponding tag.
 
 Suspected vulnerabilities can be reported privately through
 [GitHub's private vulnerability reporting form](https://github.com/unixfg/ludds-blessing/security/advisories/new).

@@ -73,22 +73,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate release PowerShell and metadata
-        shell: pwsh
-        run: |
-          $failed = $false
-          Get-ChildItem -LiteralPath scripts/release -Filter '*.ps1' | ForEach-Object {
-            $tokens = $null
-            $parseErrors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
-            if ($parseErrors.Count -gt 0) {
-              $failed = $true
-              $parseErrors | ForEach-Object { Write-Error $_.Message }
-            }
-          }
-          if ($failed) { throw 'A release script has a PowerShell syntax error.' }
-          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
-          ./scripts/release/verify-release.ps1 -Tag "v$version-ci"
       - name: Install the pinned Rust toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

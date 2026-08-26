@@ -1,6 +1,6 @@
-# Ludd’s Blessing 0.2.1 community beta
+# Ludd’s Blessing 0.2.1
 
-This is an unsigned Windows 10/11 x64 beta. Windows SmartScreen may show an “unrecognized app” warning because the executable is not code-signed. Verify the SHA-256 digest shown by GitHub for the executable before running it. The tagged source archives on the same release page contain the source, license, and build scripts.
+This is an unsigned Windows 10/11 x64 release. Windows SmartScreen may show an “unrecognized app” warning because the executable is not code-signed. Verify the SHA-256 digest shown by GitHub for the executable before running it. The tagged source archives on the same release page contain the source, license, and build scripts.
 
 Ludd’s Blessing is an independent community tool and is not affiliated with or endorsed by Fractal Softworks. It does not bundle Starsector files or assets.
 
@@ -13,7 +13,7 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 - Starsector may remain running while you edit a save that is not currently loaded. Every save the current log session indicates may still be active remains blocked from in-place apply, restore, protected-save unlock, and recovery operations.
 - Keep exactly one normally launched Starsector instance open. Multiple, batch-launched, unpaired, or otherwise unverifiable game processes are blocked; do not launch and close a second instance while the first remains running.
 - Apply and Restore recheck game activity at the write boundary. Do not load, switch to, or save the target in Starsector while the write is running. If the app cannot confirm that the target is inactive, it fails closed rather than replacing the save.
-- Keep the game’s own save backups. Ludd’s Blessing stores its backups outside the Starsector save directory and does not prune them during the beta.
+- Keep the game’s own save backups. Ludd’s Blessing stores its backups outside the Starsector save directory and does not prune them automatically.
 - Iron Mode and autosaves remain locked until explicitly acknowledged and immediately backed up for that session.
 - Mod support is conservative. Unknown data is preserved, but support for every mod’s semantics is not promised.
 
@@ -126,6 +126,6 @@ Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.1_windows-x64.ex
 
 Compare the displayed hash with the `sha256:` digest GitHub shows beside the executable on the release page. A mismatch means the file must not be run.
 
-## Beta acceptance checks
+## Checking an edited save
 
 Before trusting an edited copy, load it in Starsector `0.98a-RC8`, inspect the changed values and cargo-space totals, earn additional XP when progression was changed, save again in-game, and reopen that new save in the editor. Report a failure with the redacted diagnostics export; do not attach a save publicly unless every owner of its contents has approved sharing it. Report a suspected vulnerability privately through [GitHub's reporting form](https://github.com/unixfg/ludds-blessing/security/advisories/new), not in a public issue.

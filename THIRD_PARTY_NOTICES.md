@@ -1,10 +1,7 @@
 # Third-party notices
 
-The release pipeline generates a conservative notice inventory from the locked
-Rust source/build graph and JavaScript production graph, plus an SPDX
-source/build SBOM, for each binary artifact. These records support license and
-supply-chain review; they are not a claim that every package is present in the
-runtime binary or a cryptographic attestation of binary composition.
+The source tree uses third-party Rust and JavaScript dependencies under their
+respective licenses.
 
 The standalone Windows executable uses Microsoft’s separately installed
 WebView2 Evergreen Runtime. WebView2 is not bundled with Ludd’s Blessing and is
