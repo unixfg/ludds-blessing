@@ -149,6 +149,7 @@ impl OpenedSave {
         if edits.is_empty() {
             return Err(CoreError::invalid_edit("at least one edit is required"));
         }
+        reject_duplicate_cargo_edit_targets(edits)?;
         let mut desired = self.state.clone();
         let mut invalidated_officers = HashSet::new();
         let mut player_progression_requested = false;
@@ -573,6 +574,63 @@ impl OpenedSave {
                 || self.options.allow_protected,
         })
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum CargoEditTarget {
+    Inventory(String),
+    Storage(String, String),
+    ColonyResources(String, String),
+    NewStorage(String, CargoItemKey),
+    NewColonyResource(String, String),
+}
+
+fn reject_duplicate_cargo_edit_targets(edits: &[Edit]) -> Result<()> {
+    let mut targets = HashSet::new();
+    for edit in edits {
+        let target = match edit {
+            Edit::SetInventoryStackQuantity { stack_id, .. } => {
+                Some(CargoEditTarget::Inventory(stack_id.clone()))
+            }
+            Edit::SetStorageStackQuantity {
+                colony_id,
+                stack_id,
+                ..
+            } => Some(CargoEditTarget::Storage(
+                colony_id.clone(),
+                stack_id.clone(),
+            )),
+            Edit::SetColonyResourceQuantity {
+                colony_id,
+                stack_id,
+                ..
+            } => Some(CargoEditTarget::ColonyResources(
+                colony_id.clone(),
+                stack_id.clone(),
+            )),
+            Edit::AddStorageStack {
+                colony_id, item, ..
+            } => Some(CargoEditTarget::NewStorage(
+                colony_id.clone(),
+                item.clone(),
+            )),
+            Edit::AddColonyResourceStack {
+                colony_id,
+                commodity_id,
+                ..
+            } => Some(CargoEditTarget::NewColonyResource(
+                colony_id.clone(),
+                commodity_id.clone(),
+            )),
+            _ => None,
+        };
+        if target.is_some_and(|target| !targets.insert(target)) {
+            return Err(CoreError::invalid_edit(
+                "multiple staged cargo edits target the same saved stack or catalog item",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2182,6 +2240,78 @@ mod tests {
     use crate::xml::XmlLimits;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn duplicate_cargo_targets_are_rejected_without_conflating_distinct_scopes() {
+        for edits in [
+            vec![
+                Edit::SetStorageStackQuantity {
+                    colony_id: "colony-a".into(),
+                    stack_id: "stack-a".into(),
+                    value: 12.0,
+                },
+                Edit::SetStorageStackQuantity {
+                    colony_id: "colony-a".into(),
+                    stack_id: "stack-a".into(),
+                    value: 15.0,
+                },
+            ],
+            vec![
+                Edit::SetStorageStackQuantity {
+                    colony_id: "colony-a".into(),
+                    stack_id: "stack-a".into(),
+                    value: 15.0,
+                },
+                Edit::SetStorageStackQuantity {
+                    colony_id: "colony-a".into(),
+                    stack_id: "stack-a".into(),
+                    value: 12.0,
+                },
+            ],
+        ] {
+            let error = reject_duplicate_cargo_edit_targets(&edits).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidEdit);
+            assert!(error.message.contains("same saved stack"));
+        }
+
+        let item = CargoItemKey {
+            kind: InventoryKind::Weapons,
+            item_id: "vulcan".into(),
+            special_data: None,
+        };
+        assert!(reject_duplicate_cargo_edit_targets(&[
+            Edit::AddStorageStack {
+                colony_id: "colony-a".into(),
+                item: item.clone(),
+                quantity: 1.0,
+            },
+            Edit::AddStorageStack {
+                colony_id: "colony-a".into(),
+                item,
+                quantity: 2.0,
+            },
+        ])
+        .is_err());
+
+        assert!(reject_duplicate_cargo_edit_targets(&[
+            Edit::SetStorageStackQuantity {
+                colony_id: "colony-a".into(),
+                stack_id: "shared-selector".into(),
+                value: 12.0,
+            },
+            Edit::SetStorageStackQuantity {
+                colony_id: "colony-b".into(),
+                stack_id: "shared-selector".into(),
+                value: 15.0,
+            },
+            Edit::SetColonyResourceQuantity {
+                colony_id: "colony-a".into(),
+                stack_id: "shared-selector".into(),
+                value: 18.0,
+            },
+        ])
+        .is_ok());
+    }
 
     fn campaign_fixture() -> String {
         r#"<?xml version="1.0" ?>

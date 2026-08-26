@@ -531,7 +531,7 @@ describe("Ludd’s Blessing app shell", () => {
     expect(screen.getByText(/no economy data is guessed/i)).toBeInTheDocument();
   });
 
-  it("stages a catalog-backed weapon addition for colony storage", async () => {
+  it("stages and updates multiple catalog-backed additions in one dialog session", async () => {
     render(<App />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
     await screen.findByRole("heading", { name: "Name and portrait" });
@@ -545,11 +545,122 @@ describe("Ludd’s Blessing app shell", () => {
     fireEvent.change(screen.getByLabelText("Amount of Vulcan Cannon to add"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
 
+    expect(screen.getByRole("dialog", { name: "Add to Asteria Outpost storage" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Vulcan Cannon.*Staged \+3/i }));
+    fireEvent.change(screen.getByLabelText("Amount of Vulcan Cannon to add"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update staged addition" }));
+
+    fireEvent.change(screen.getByLabelText("Search item catalog"), { target: { value: "hammerhead blueprint" } });
+    fireEvent.click(screen.getByRole("button", { name: /Hammerhead blueprint.*Ship blueprints/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
+    expect(screen.getByText("2 staged additions")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+
     expect(screen.getByText("Pending additions")).toBeInTheDocument();
-    expect(screen.getByText("vulcan · +3")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+    expect(screen.getByText("vulcan · +5")).toBeInTheDocument();
+    expect(screen.getByText("hammerhead · +1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Review 2 changes/i }));
     await screen.findByRole("heading", { name: "Review staged changes" });
     expect(screen.getByText("Asteria Outpost · Add Vulcan Cannon")).toBeInTheDocument();
+    expect(screen.getByText("Asteria Outpost · Add Hammerhead blueprint")).toBeInTheDocument();
+  });
+
+  it("keeps catalog additions and direct saved-stack edits mutually exclusive", async () => {
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    await screen.findByRole("heading", { name: "Name and portrait" });
+    fireEvent.click(screen.getByRole("button", { name: "Colonies" }));
+    await screen.findByRole("heading", { name: "Colonies" });
+
+    const savedSupplies = screen.getByLabelText("Supplies quantity");
+    fireEvent.change(savedSupplies, { target: { value: "1300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    const directFirst = screen.getByRole("button", { name: /Supplies.*Reset the staged Storage quantity.*Unavailable/i });
+    expect(directFirst).toHaveAttribute("aria-disabled", "true");
+    directFirst.focus();
+    expect(directFirst).toHaveFocus();
+    expect(directFirst.getAttribute("aria-describedby")).toContain("reason");
+    fireEvent.click(directFirst);
+    expect(screen.queryByLabelText("Amount of Supplies to add")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset Supplies quantity" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    const supplies = screen.getByRole("button", { name: /Supplies.*Increase saved stack/i });
+    expect(supplies).toBeEnabled();
+    fireEvent.click(supplies);
+    fireEvent.change(screen.getByLabelText("Amount of Supplies to add"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+
+    expect(savedSupplies).toBeDisabled();
+    expect(screen.getByText("Reset the staged catalog addition before editing this saved quantity directly.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset Supplies addition" }));
+    expect(savedSupplies).toBeEnabled();
+  });
+
+  it("matches saved catalog identities exactly and keeps targets independent", async () => {
+    const snapshot = demoSnapshot("demo-mira");
+    snapshot.colonies[0].storage?.stacks.push({
+      id: "storage-asteria-vulcan",
+      itemId: "vulcan",
+      name: "Vulcan Cannon",
+      kind: "weapons",
+      quantity: "2",
+      maxQuantity: "1000000",
+      cargoSpacePerUnit: "1",
+      specialData: null,
+      editable: true,
+      reason: null,
+    });
+    vi.spyOn(api, "openSave").mockResolvedValue(snapshot);
+
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    await screen.findByRole("heading", { name: "Name and portrait" });
+    fireEvent.click(screen.getByRole("button", { name: "Colonies" }));
+    await screen.findByRole("heading", { name: "Colonies" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    fireEvent.change(screen.getByLabelText("Search item catalog"), { target: { value: "vulcan" } });
+    expect(screen.getByRole("button", { name: /Vulcan Cannon.*Weapons.*Increase saved stack/i })).toBeInTheDocument();
+    const blueprint = screen.getByRole("button", { name: /Vulcan Cannon blueprint.*Weapon blueprints.*New stack/i });
+    fireEvent.click(blueprint);
+    fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
+    fireEvent.change(screen.getByLabelText("Search item catalog"), { target: { value: "supplies" } });
+    fireEvent.click(screen.getByRole("button", { name: /Supplies.*Increase saved stack/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+    expect(screen.getByLabelText("Vulcan Cannon quantity")).toBeEnabled();
+    expect(screen.getByLabelText("Supplies quantity")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Local resources/i }));
+    expect(screen.getByLabelText("Supplies quantity")).toBeEnabled();
+  });
+
+  it("protects Local Resources from conflicting direct and catalog edits", async () => {
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    await screen.findByRole("heading", { name: "Name and portrait" });
+    fireEvent.click(screen.getByRole("button", { name: "Colonies" }));
+    await screen.findByRole("heading", { name: "Colonies" });
+    fireEvent.click(screen.getByRole("tab", { name: /Local resources/i }));
+
+    const savedSupplies = screen.getByLabelText("Supplies quantity");
+    fireEvent.change(savedSupplies, { target: { value: "9400" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add commodity" }));
+    expect(screen.getByRole("button", { name: /Supplies.*Reset the staged Local Resources quantity.*Unavailable/i })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset Supplies quantity" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add commodity" }));
+    fireEvent.click(screen.getByRole("button", { name: /Supplies.*Increase saved stack/i }));
+    fireEvent.change(screen.getByLabelText("Amount of Supplies to add"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+    expect(savedSupplies).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset Supplies addition" }));
+    expect(savedSupplies).toBeEnabled();
   });
 
   it("limits Local Resources additions to economic commodities", async () => {
@@ -578,6 +689,7 @@ describe("Ludd’s Blessing app shell", () => {
     const blueprint = screen.getByRole("button", { name: /Hammerhead blueprint.*Ship blueprints/i });
     fireEvent.click(blueprint);
     fireEvent.click(screen.getByRole("button", { name: "Stage addition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
     expect(screen.getByText("hammerhead · +1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Review 1 changes/i })).toBeInTheDocument();
   });

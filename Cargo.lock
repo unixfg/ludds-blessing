@@ -1811,7 +1811,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "ludds-blessing"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.22.1",
  "csv",
@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "save-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "fs2",
  "hex",

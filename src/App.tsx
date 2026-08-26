@@ -801,7 +801,7 @@ function SettingsPage({ diagnostics, rootPath, setRootPath, refreshToken, onRegi
         <div className="panel__heading"><div><p className="eyebrow">Privacy-safe report</p><h3>Diagnostics</h3></div><button className="button button--secondary" type="button" onClick={() => void onDiagnostics()}><FileSearch size={16} /> Generate</button></div>
         {diagnostics ? <div className="diagnostics"><div><strong>Version {diagnostics.appVersion}</strong><span>{diagnostics.os}</span></div><ul>{diagnostics.entries.map((entry) => <li key={entry}>{entry}</li>)}</ul><button className="button button--ghost" type="button" onClick={copyDiagnostics}><ClipboardCopy size={15} /> Copy report</button></div> : <p className="muted">Reports exclude save contents and redact user-specific path components by default.</p>}
       </section>
-      <section className="panel about-panel"><Orbit size={30} aria-hidden="true" /><div><h3>Ludd’s Blessing 0.2.0</h3><p>An independent, local-first community tool. Starsector is created by Fractal Softworks. No Starsector assets are bundled.</p></div></section>
+      <section className="panel about-panel"><Orbit size={30} aria-hidden="true" /><div><h3>Ludd’s Blessing 0.2.1</h3><p>An independent, local-first community tool. Starsector is created by Fractal Softworks. No Starsector assets are bundled.</p></div></section>
     </div>
   );
 }

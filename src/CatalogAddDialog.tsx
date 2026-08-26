@@ -1,5 +1,5 @@
 import { PackagePlus, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AddableItemKind, AddableItemView } from "./types";
 
 const KIND_LABELS: Record<AddableItemKind, string> = {
@@ -17,16 +17,32 @@ export type CatalogAddDialogProps = {
   title: string;
   description: string;
   items: AddableItemView[];
-  existingItemIds: ReadonlySet<string>;
+  existingCatalogItemIds: ReadonlySet<AddableItemView["id"]>;
+  blockedItemReasons?: ReadonlyMap<AddableItemView["id"], string>;
+  stagedAdditions?: ReadonlyMap<AddableItemView["id"], string>;
   onClose: () => void;
   onAdd: (item: AddableItemView, quantity: string) => void;
 };
 
-export function CatalogAddDialog({ title, description, items, existingItemIds, onClose, onAdd }: CatalogAddDialogProps) {
+const EMPTY_STAGED_ADDITIONS: ReadonlyMap<AddableItemView["id"], string> = new Map();
+const EMPTY_BLOCKED_ITEM_REASONS: ReadonlyMap<AddableItemView["id"], string> = new Map();
+
+export function CatalogAddDialog({
+  title,
+  description,
+  items,
+  existingCatalogItemIds,
+  blockedItemReasons = EMPTY_BLOCKED_ITEM_REASONS,
+  stagedAdditions = EMPTY_STAGED_ADDITIONS,
+  onClose,
+  onAdd,
+}: CatalogAddDialogProps) {
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<AddableItemKind | "all">("all");
   const [selected, setSelected] = useState<AddableItemView | null>(null);
   const [quantity, setQuantity] = useState("1");
+  const [stagedConfirmation, setStagedConfirmation] = useState("");
+  const resultId = useId();
   const dialogRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
@@ -83,8 +99,16 @@ export function CatalogAddDialog({ title, description, items, existingItemIds, o
       && (!normalized || `${item.name} ${item.itemId} ${KIND_LABELS[item.kind]}`.toLocaleLowerCase().includes(normalized)));
   }, [items, kind, query]);
 
+  useEffect(() => {
+    if (selected && !filtered.some((item) => item.id === selected.id)) {
+      setSelected(null);
+      setQuantity("1");
+    }
+  }, [filtered, selected]);
+
   const rounded = Math.fround(Number(quantity));
   const maximum = selected ? Math.fround(Number(selected.maxQuantity)) : 0;
+  const selectedWasStaged = selected ? stagedAdditions.has(selected.id) : false;
   const quantityError = !selected
     ? "Choose an item."
     : quantity.trim() === "" || !Number.isFinite(Number(quantity)) || !Number.isFinite(rounded)
@@ -112,15 +136,38 @@ export function CatalogAddDialog({ title, description, items, existingItemIds, o
           </label>
           <label><span className="sr-only">Catalog category</span><select aria-label="Catalog category" value={kind} onChange={(event) => setKind(event.target.value as AddableItemKind | "all")}><option value="all">All supported types</option>{kinds.map((entry) => <option key={entry} value={entry}>{KIND_LABELS[entry]}</option>)}</select></label>
         </div>
-        <p className="catalog-dialog__count" role="status">{filtered.length} supported {filtered.length === 1 ? "entry" : "entries"}</p>
+        <div className="catalog-dialog__status-line">
+          <p className="catalog-dialog__count" role="status">{filtered.length} supported {filtered.length === 1 ? "entry" : "entries"}</p>
+          <p className="catalog-dialog__staged-status" role="status" aria-live="polite" aria-atomic="true">{stagedConfirmation}</p>
+        </div>
         <div className="catalog-dialog__body">
           <div className="catalog-results" role="group" aria-label="Supported items">
-            {filtered.map((item) => (
-              <button key={item.id} type="button" aria-pressed={selected?.id === item.id} className={selected?.id === item.id ? "is-selected" : ""} onClick={() => { setSelected(item); setQuantity("1"); }}>
-                <span><strong>{item.name}</strong><small>{KIND_LABELS[item.kind]} · {item.itemId}</small></span>
-                {existingItemIds.has(item.itemId) ? <b>Increase saved stack</b> : <b>New stack</b>}
-              </button>
-            ))}
+            {filtered.map((item, index) => {
+              const blockedReason = blockedItemReasons.get(item.id);
+              const blockedReasonId = blockedReason ? `${resultId}-${index}-reason` : undefined;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-disabled={blockedReason ? "true" : undefined}
+                  aria-describedby={blockedReasonId}
+                  aria-pressed={selected?.id === item.id}
+                  className={selected?.id === item.id ? "is-selected" : ""}
+                  onClick={() => {
+                    if (blockedReason) return;
+                    setSelected(item);
+                    setQuantity(stagedAdditions.get(item.id) ?? "1");
+                  }}
+                >
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>{KIND_LABELS[item.kind]} · {item.itemId}</small>
+                    {blockedReason ? <small className="catalog-results__reason" id={blockedReasonId}>{blockedReason}</small> : null}
+                  </span>
+                  {blockedReason ? <b>Unavailable</b> : stagedAdditions.has(item.id) ? <b>Staged +{stagedAdditions.get(item.id)}</b> : existingCatalogItemIds.has(item.id) ? <b>Increase saved stack</b> : <b>New stack</b>}
+                </button>
+              );
+            })}
             {filtered.length === 0 ? <p className="catalog-results__empty">No supported catalog entries match this search.</p> : null}
           </div>
           <aside className="catalog-selection">
@@ -129,10 +176,28 @@ export function CatalogAddDialog({ title, description, items, existingItemIds, o
               <div><strong>{selected.name}</strong><span>{selected.itemId}</span><small>{selected.cargoSpacePerUnit} cargo space per unit</small></div>
               <label><span>Amount to add</span><input aria-label={`Amount of ${selected.name} to add`} type="number" min="1" max={selected.maxQuantity} step={isWholeQuantity(selected.kind) ? "1" : "any"} value={quantity} onChange={(event) => setQuantity(event.target.value)} aria-invalid={Boolean(quantityError)} /></label>
               {quantityError ? <p className="stack-error" role="alert">{quantityError}</p> : null}
-              <button className="button" type="button" disabled={Boolean(quantityError)} onClick={() => { onAdd(selected, String(rounded)); onClose(); }}><PackagePlus size={16} /> Stage addition</button>
+              <button
+                className="button"
+                type="button"
+                disabled={Boolean(quantityError)}
+                onClick={() => {
+                  const stagedQuantity = String(rounded);
+                  const pendingCount = stagedAdditions.size + (selectedWasStaged ? 0 : 1);
+                  onAdd(selected, stagedQuantity);
+                  setStagedConfirmation(`${selectedWasStaged ? "Updated" : "Staged"} ${selected.name} (+${stagedQuantity}). ${pendingCount} pending ${pendingCount === 1 ? "addition" : "additions"}.`);
+                  setSelected(null);
+                  setQuantity("1");
+                  searchRef.current?.focus();
+                  searchRef.current?.select();
+                }}
+              ><PackagePlus size={16} /> {selectedWasStaged ? "Update staged addition" : "Stage addition"}</button>
             </> : <p className="muted">Select an installed catalog entry to stage an addition.</p>}
           </aside>
         </div>
+        <footer className="catalog-dialog__footer">
+          <span>{stagedAdditions.size} staged {stagedAdditions.size === 1 ? "addition" : "additions"}</span>
+          <button className="button button--secondary" type="button" onClick={onClose}>Done adding</button>
+        </footer>
       </section>
     </div>
   );

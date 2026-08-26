@@ -1,4 +1,4 @@
-# Ludd’s Blessing 0.2.0 community beta
+# Ludd’s Blessing 0.2.1 community beta
 
 This is an unsigned Windows 10/11 x64 beta. Windows SmartScreen may show an “unrecognized app” warning because the binaries are not code-signed. Verify the SHA-256 values in the accompanying checksum manifest before running the installer or portable executable. The application and its source are licensed under GPL-3.0-or-later; see the included `COPYRIGHT.md` and `LICENSE.md`.
 
@@ -90,7 +90,9 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
   each colony name. Existing recognized quantities may be adjusted in both.
 - **Add item** creates a reviewed Storage stack for a catalog-backed commodity,
   weapon, fighter LPC, or individual ship/weapon/fighter blueprint. **Add
-  commodity** does the same for an economic commodity in Local Resources.
+  commodity** does the same for an economic commodity in Local Resources. The
+  validated catalog stays open after each addition; select **Done adding** after
+  staging every intended stack.
 - Local Resources edits affect the current stockpile only. They do not create
   a month-end charge or refund, and normal production, replenishment, or
   shortage consumption may change the value after loading.
@@ -121,10 +123,10 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 ## Verify a download in PowerShell
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.0_windows-x64-installer.exe
+Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.1_windows-x64-installer.exe
 ```
 
-Compare the displayed hash with `LuddsBlessing_0.2.0_windows-x64-SHA256SUMS.txt`. A mismatch means the file must not be run.
+Compare the displayed hash with `LuddsBlessing_0.2.1_windows-x64-SHA256SUMS.txt`. A mismatch means the file must not be run.
 
 ## Beta acceptance checks
 

@@ -1,6 +1,6 @@
 [package]
 name = "ludds-blessing"
-version = "0.2.0"
+version = "0.2.1"
 description = "A local-first Starsector save editor"
 authors = ["Ludd's Blessing contributors"]
 edition = "2021"

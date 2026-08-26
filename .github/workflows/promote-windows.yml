@@ -48,7 +48,7 @@ jobs:
             exit 1
           }
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]] || {
-            echo 'tag must be a numbered beta tag such as v0.2.0-beta.1.' >&2
+            echo 'tag must be a numbered beta tag such as vX.Y.Z-beta.1.' >&2
             exit 1
           }
 

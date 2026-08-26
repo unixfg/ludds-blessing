@@ -1,6 +1,6 @@
-# Windows 0.2.0 beta release runbook
+# Windows 0.2.1 beta release runbook
 
-The `Windows beta release` workflow is the authoritative packaging path for version `0.2.0`. A numbered beta tag automatically builds the exact tagged commit, retains the candidate for 35 days, and then pauses before publication at the protected `release` environment. After approval, the workflow uploads every asset to an unpublished draft, verifies the uploaded names and sizes, and publishes that same candidate; it never rebuilds the binaries.
+The `Windows beta release` workflow is the authoritative packaging path for version `0.2.1`. A numbered beta tag automatically builds the exact tagged commit, retains the candidate for 35 days, and then pauses before publication at the protected `release` environment. After approval, the workflow uploads every asset to an unpublished draft, verifies the uploaded names and sizes, and publishes that same candidate; it never rebuilds the binaries.
 
 Manual dispatch remains available for building an untagged review candidate. A manually dispatched run never publishes. After acceptance, the separate `Promote Windows beta` workflow can publish that retained candidate by workflow run ID and tag.
 
@@ -21,8 +21,8 @@ Manual dispatch remains available for building an untagged review candidate. A m
 2. Create an annotated tag matching `v<package-version>-beta.<positive-number>`, for example:
 
    ```bash
-   git tag -a v0.2.0-beta.1 -m "Ludd's Blessing 0.2.0 beta 1"
-   git push origin v0.2.0-beta.1
+   git tag -a v0.2.1-beta.1 -m "Ludd's Blessing 0.2.1 beta 1"
+   git push origin v0.2.1-beta.1
    ```
 
 3. The **Windows beta release** workflow automatically builds and verifies the candidate.
@@ -58,13 +58,13 @@ $stage = .\scripts\release\prepare-windows.ps1
 Generate `SBOM.spdx.json` into `$stage` with Syft or the same pinned `anchore/sbom-action` used by CI. It catalogs the checked-out source/build graph and staged payload, not only runtime binary contents. Add descriptive provenance identifying the clean source commit and candidate tag, then run:
 
 ```powershell
-.\scripts\release\new-release-provenance.ps1 -StagingDirectory $stage -Tag v0.2.0-beta.1 -SourceCommit (git rev-parse HEAD) -Repository local/local -WorkflowRunId local
+.\scripts\release\new-release-provenance.ps1 -StagingDirectory $stage -Tag v0.2.1-beta.1 -SourceCommit (git rev-parse HEAD) -Repository local/local -WorkflowRunId local
 .\scripts\release\finalize-windows.ps1 -StagingDirectory $stage
-.\scripts\release\verify-windows-artifacts.ps1 -ArtifactRoot (Split-Path -Parent $stage) -Tag v0.2.0-beta.1 -SourceCommit (git rev-parse HEAD) -Repository local/local -WorkflowRunId local
+.\scripts\release\verify-windows-artifacts.ps1 -ArtifactRoot (Split-Path -Parent $stage) -Tag v0.2.1-beta.1 -SourceCommit (git rev-parse HEAD) -Repository local/local -WorkflowRunId local
 ```
 
 The release scripts refuse to overwrite an existing staging directory, provenance file, archive, or checksum manifest.
 
 ## Signing and later platforms
 
-Version `0.2.0` is deliberately unsigned, so the release notes and beta guide must retain the SmartScreen warning. Do not add a signing secret to the repository. macOS and Linux artifacts remain blocked on native transaction tests and in-game smoke tests; macOS additionally requires signing and notarization before public distribution.
+Version `0.2.1` is deliberately unsigned, so the release notes and beta guide must retain the SmartScreen warning. Do not add a signing secret to the repository. macOS and Linux artifacts remain blocked on native transaction tests and in-game smoke tests; macOS additionally requires signing and notarization before public distribution.

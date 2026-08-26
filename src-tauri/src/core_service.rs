@@ -4218,6 +4218,124 @@ mod tests {
     }
 
     #[test]
+    fn ipc_existing_stack_additions_conflict_with_direct_edits_in_both_orders() {
+        let (temporary, service) = lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        let mut snapshot = open_lifecycle_session(&service, &save_dir);
+        let session = service.require_session(&snapshot.session_id).unwrap();
+
+        let mut catalogs = LocalCatalogs::default();
+        catalogs.inventory.insert(
+            (CatalogItemKind::Resources, "supplies".into()),
+            ValidatedCatalogItem {
+                name: "Supplies".into(),
+                cargo_space_per_unit: Some(1.0),
+                local_resources_eligible: true,
+            },
+        );
+        catalogs.fingerprint = data_catalog_fingerprint(&catalogs);
+        let addable_items = addable_item_views(&catalogs);
+        let supplies_catalog_id = addable_items
+            .iter()
+            .find(|item| item.item_id == "supplies")
+            .unwrap()
+            .id
+            .clone();
+        snapshot.catalog.addable_items = addable_items;
+
+        let colony_id = ColonyId::new("colony-a");
+        let storage_stack_id = StorageStackId::new("storage-supplies");
+        let resource_stack_id = ColonyResourceStackId::new("resource-supplies");
+        snapshot.colonies = vec![ColonyView {
+            id: colony_id.clone(),
+            name: "Asteria".into(),
+            location_context: None,
+            storage: Some(StorageView {
+                stacks: vec![StorageStackView {
+                    id: storage_stack_id.clone(),
+                    item_id: "supplies".into(),
+                    special_data: None,
+                    name: "Supplies".into(),
+                    kind: InventoryKind::Resources,
+                    quantity: "10".into(),
+                    max_quantity: "100".into(),
+                    cargo_space_per_unit: "1".into(),
+                    editable: true,
+                    reason: None,
+                }],
+                used_space: "10".into(),
+                max_space: None,
+                overloaded: false,
+                editable: true,
+                reason: None,
+            }),
+            local_resources: Some(ColonyResourcesView {
+                stacks: vec![ColonyResourceStackView {
+                    id: resource_stack_id.clone(),
+                    item_id: "supplies".into(),
+                    special_data: None,
+                    name: "Supplies".into(),
+                    kind: InventoryKind::Resources,
+                    quantity: "10".into(),
+                    max_quantity: "100".into(),
+                    cargo_space_per_unit: "1".into(),
+                    editable: true,
+                    reason: None,
+                }],
+                used_space: "10".into(),
+                max_space: None,
+                overloaded: false,
+                editable: true,
+                reason: None,
+            }),
+            warnings: Vec::new(),
+        }];
+
+        let translate_and_prepare = |edits: Vec<Edit>| {
+            let core_edits = edits
+                .into_iter()
+                .map(|edit| edit_to_core(edit, &snapshot, &HashMap::new(), &catalogs))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            // Duplicate targets are rejected before stack authorization or graph
+            // lookup, so the minimal opened-save fixture is sufficient here.
+            session.opened.prepare_review(&core_edits).unwrap_err()
+        };
+
+        let storage_set = Edit::SetStorageStackQuantity {
+            colony_id: colony_id.clone(),
+            stack_id: storage_stack_id,
+            quantity: "12".into(),
+        };
+        let storage_add = Edit::AddStorageItem {
+            colony_id: colony_id.clone(),
+            catalog_item_id: supplies_catalog_id.clone(),
+            quantity: "1".into(),
+        };
+        let resource_set = Edit::SetColonyResourceQuantity {
+            colony_id: colony_id.clone(),
+            stack_id: resource_stack_id,
+            quantity: "12".into(),
+        };
+        let resource_add = Edit::AddColonyResource {
+            colony_id,
+            catalog_item_id: supplies_catalog_id,
+            quantity: "1".into(),
+        };
+
+        for edits in [
+            vec![storage_set.clone(), storage_add.clone()],
+            vec![storage_add, storage_set],
+            vec![resource_set.clone(), resource_add.clone()],
+            vec![resource_add, resource_set],
+        ] {
+            let error = translate_and_prepare(edits);
+            assert_eq!(error.code, save_core::ErrorCode::InvalidEdit);
+            assert!(error.message.contains("same saved stack"));
+        }
+    }
+
+    #[test]
     fn inventory_review_rejects_a_stale_catalog_fingerprint() {
         assert!(verify_data_catalog_fingerprint("catalog-a", "catalog-a").is_ok());
         let error = verify_data_catalog_fingerprint("catalog-a", "catalog-b").unwrap_err();

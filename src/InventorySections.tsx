@@ -29,6 +29,77 @@ import { CatalogAddDialog } from "./CatalogAddDialog";
 
 type StackContainer = InventoryView | StorageView | ColonyResourcesView;
 type StackRow = InventoryStackView | StorageStackView | ColonyResourceStackView;
+type ColonyStackRow = StorageStackView | ColonyResourceStackView;
+
+const stackIdentity = (kind: InventoryKind, itemId: string, specialData: string | null): string => JSON.stringify([
+  kind,
+  itemId,
+  specialData,
+]);
+
+const catalogItemStackIdentity = (item: AddableItemView): string => {
+  switch (item.kind) {
+    case "commodity":
+      return stackIdentity("resources", item.itemId, null);
+    case "weapon":
+      return stackIdentity("weapons", item.itemId, null);
+    case "fighter_wing":
+      return stackIdentity("fighter_wing", item.itemId, null);
+    case "ship_blueprint":
+      return stackIdentity("special", "ship_bp", item.itemId);
+    case "weapon_blueprint":
+      return stackIdentity("special", "weapon_bp", item.itemId);
+    case "fighter_blueprint":
+      return stackIdentity("special", "fighter_bp", item.itemId);
+  }
+};
+
+const catalogStackMatches = (items: AddableItemView[], stacks: ColonyStackRow[]): ReadonlyMap<AddableItemView["id"], ColonyStackRow[]> => {
+  const stacksByIdentity = new Map<string, ColonyStackRow[]>();
+  for (const stack of stacks) {
+    const identity = stackIdentity(stack.kind, stack.itemId, stack.specialData);
+    const matches = stacksByIdentity.get(identity);
+    if (matches) matches.push(stack);
+    else stacksByIdentity.set(identity, [stack]);
+  }
+  return new Map(items.map((item) => [item.id, stacksByIdentity.get(catalogItemStackIdentity(item)) ?? []]));
+};
+
+const existingCatalogItemIds = (matches: ReadonlyMap<AddableItemView["id"], ColonyStackRow[]>): ReadonlySet<AddableItemView["id"]> => new Set(
+  [...matches].filter(([, stacks]) => stacks.length === 1).map(([catalogItemId]) => catalogItemId),
+);
+
+const catalogBlockReasons = (
+  matches: ReadonlyMap<AddableItemView["id"], ColonyStackRow[]>,
+  directEdits: ReadonlyMap<string, string>,
+  targetLabel: string,
+): ReadonlyMap<AddableItemView["id"], string> => {
+  const reasons = new Map<AddableItemView["id"], string>();
+  for (const [catalogItemId, stacks] of matches) {
+    if (stacks.length > 1) {
+      reasons.set(catalogItemId, `Multiple saved ${targetLabel} stacks match this catalog item.`);
+    } else if (stacks.length === 1 && !stacks[0].editable) {
+      reasons.set(catalogItemId, stacks[0].reason ?? `The matching saved ${targetLabel} stack is read-only.`);
+    } else if (stacks.length === 1 && directEdits.has(stacks[0].id)) {
+      reasons.set(catalogItemId, `Reset the staged ${targetLabel} quantity before adding to this saved stack.`);
+    }
+  }
+  return reasons;
+};
+
+const stackAdditionBlockReasons = (
+  additions: Array<Extract<Edit, { type: "add_storage_item" | "add_colony_resource" }>>,
+  matches: ReadonlyMap<AddableItemView["id"], ColonyStackRow[]>,
+): ReadonlyMap<string, string> => {
+  const reasons = new Map<string, string>();
+  for (const addition of additions) {
+    const stacks = matches.get(addition.catalogItemId) ?? [];
+    if (stacks.length === 1) {
+      reasons.set(stacks[0].id, "Reset the staged catalog addition before editing this saved quantity directly.");
+    }
+  }
+  return reasons;
+};
 
 type DraftProps = {
   snapshot: SaveSnapshot;
@@ -126,6 +197,7 @@ type ExistingStackEditorProps = {
   edits: ReadonlyMap<string, string>;
   globallyDisabled: boolean;
   globalReason: string | null;
+  blockedStackReasons?: ReadonlyMap<string, string>;
   showCapacity?: boolean;
   onChange: (stack: StackRow, quantity: string) => void;
   onReset: (stack: StackRow) => void;
@@ -140,6 +212,7 @@ export function ExistingStackEditor({
   edits,
   globallyDisabled,
   globalReason,
+  blockedStackReasons = new Map(),
   showCapacity = true,
   onChange,
   onReset,
@@ -274,10 +347,11 @@ export function ExistingStackEditor({
               : compactSavedQuantity;
           const error = hasInvalidEntry ? quantityError(stack, displayedQuantity) : null;
           const savedAs = changed && !error ? f32RoundingPreview(quantity) : null;
-          const disabled = globallyDisabled || !inventory.editable || !stack.editable;
-          const stackReason = !stack.editable
+          const additionBlockReason = blockedStackReasons.get(stack.id);
+          const disabled = globallyDisabled || !inventory.editable || !stack.editable || Boolean(additionBlockReason);
+          const stackReason = additionBlockReason ?? (!stack.editable
             ? stack.reason ?? "This stack is read-only because it could not be safely authorized."
-            : null;
+            : null);
           const reasonId = `${sectionId}-${index}-reason`;
           const errorId = `${sectionId}-${index}-error`;
           const roundingId = `${sectionId}-${index}-rounding`;
@@ -476,6 +550,36 @@ export function ColoniesPage({ snapshot, draft, upsert, reset, resetPrefix }: Co
   const resourceAdditions = useMemo(() => draft.filter(
     (edit): edit is Extract<Edit, { type: "add_colony_resource" }> => edit.type === "add_colony_resource" && edit.colonyId === colony?.id,
   ), [colony?.id, draft]);
+  const storageAdditionQuantities = useMemo(() => new Map(
+    storageAdditions.map((edit) => [edit.catalogItemId, edit.quantity]),
+  ), [storageAdditions]);
+  const resourceAdditionQuantities = useMemo(() => new Map(
+    resourceAdditions.map((edit) => [edit.catalogItemId, edit.quantity]),
+  ), [resourceAdditions]);
+  const storageCatalogMatches = useMemo(
+    () => catalogStackMatches(snapshot.catalog.addableItems, colony?.storage?.stacks ?? []),
+    [colony?.storage?.stacks, snapshot.catalog.addableItems],
+  );
+  const resourceCatalogMatches = useMemo(
+    () => catalogStackMatches(snapshot.catalog.addableItems, colony?.localResources?.stacks ?? []),
+    [colony?.localResources?.stacks, snapshot.catalog.addableItems],
+  );
+  const storageCatalogBlocks = useMemo(
+    () => catalogBlockReasons(storageCatalogMatches, storageEdits, "Storage"),
+    [storageCatalogMatches, storageEdits],
+  );
+  const resourceCatalogBlocks = useMemo(
+    () => catalogBlockReasons(resourceCatalogMatches, resourceEdits, "Local Resources"),
+    [resourceCatalogMatches, resourceEdits],
+  );
+  const storageStackBlocks = useMemo(
+    () => stackAdditionBlockReasons(storageAdditions, storageCatalogMatches),
+    [storageAdditions, storageCatalogMatches],
+  );
+  const resourceStackBlocks = useMemo(
+    () => stackAdditionBlockReasons(resourceAdditions, resourceCatalogMatches),
+    [resourceAdditions, resourceCatalogMatches],
+  );
   const globallyDisabled = !snapshot.writeCapability.editable || snapshot.protectedLocked;
   const globalReason = snapshot.protectedLocked
     ? "Unlock this protected save before staging colony stack changes."
@@ -596,6 +700,7 @@ export function ColoniesPage({ snapshot, draft, upsert, reset, resetPrefix }: Co
                             edits={storageEdits}
                             globallyDisabled={globallyDisabled}
                             globalReason={globalReason}
+                            blockedStackReasons={storageStackBlocks}
                             onChange={(stack, quantity) => upsert({ type: "set_storage_stack_quantity", colonyId: colony.id, stackId: stack.id, quantity })}
                             onReset={(stack) => reset(`colony.${colony.id}.storage.${stack.id}`)}
                             onResetAll={() => resetPrefix(`colony.${colony.id}.storage.`)}
@@ -621,6 +726,7 @@ export function ColoniesPage({ snapshot, draft, upsert, reset, resetPrefix }: Co
                             edits={resourceEdits}
                             globallyDisabled={globallyDisabled}
                             globalReason={globalReason}
+                            blockedStackReasons={resourceStackBlocks}
                             showCapacity={false}
                             onChange={(stack, quantity) => upsert({ type: "set_colony_resource_quantity", colonyId: colony.id, stackId: stack.id, quantity })}
                             onReset={(stack) => reset(`colony.${colony.id}.localResources.${stack.id}`)}
@@ -642,7 +748,9 @@ export function ColoniesPage({ snapshot, draft, upsert, reset, resetPrefix }: Co
                       title={catalogTarget === "storage" ? `Add to ${colony.name} storage` : `Add to ${colony.name} Local Resources`}
                       description={catalogTarget === "storage" ? "Choose a supported installed item. Existing matches are increased; absent matches become a checked RC8 stack." : "Choose a recognized economic commodity. Starsector's economy may change the amount after loading."}
                       items={catalogTarget === "storage" ? snapshot.catalog.addableItems : snapshot.catalog.addableItems.filter((item) => item.localResourcesEligible)}
-                      existingItemIds={new Set((catalogTarget === "storage" ? colony.storage?.stacks : colony.localResources?.stacks)?.map((stack) => stack.itemId) ?? [])}
+                      existingCatalogItemIds={existingCatalogItemIds(catalogTarget === "storage" ? storageCatalogMatches : resourceCatalogMatches)}
+                      blockedItemReasons={catalogTarget === "storage" ? storageCatalogBlocks : resourceCatalogBlocks}
+                      stagedAdditions={catalogTarget === "storage" ? storageAdditionQuantities : resourceAdditionQuantities}
                       onClose={() => setCatalogTarget(null)}
                       onAdd={(item, quantity) => upsert(catalogTarget === "storage"
                         ? { type: "add_storage_item", colonyId: colony.id, catalogItemId: item.id, quantity }

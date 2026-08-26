@@ -1878,7 +1878,7 @@ select:hover:not(:disabled) {
   display: grid;
   width: min(920px, 96vw);
   max-height: min(760px, 92vh);
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1915,11 +1915,25 @@ select:hover:not(:disabled) {
   padding: 12px 20px 6px;
 }
 
-.catalog-dialog__count {
-  margin: 0;
+.catalog-dialog__status-line {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 3px 20px 9px;
+}
+
+.catalog-dialog__count,
+.catalog-dialog__staged-status {
+  margin: 0;
   color: var(--paper-muted);
   font-size: 0.64rem;
+}
+
+.catalog-dialog__staged-status {
+  color: var(--green);
+  text-align: right;
 }
 
 .catalog-dialog__body {
@@ -1955,6 +1969,12 @@ select:hover:not(:disabled) {
   background: rgb(82 215 210 / 9%);
 }
 
+.catalog-results button[aria-disabled="true"] {
+  color: var(--paper-muted);
+  background: rgb(255 255 255 / 2%);
+  cursor: not-allowed;
+}
+
 .catalog-results button.is-selected {
   box-shadow: inset 3px 0 var(--cyan);
 }
@@ -1973,6 +1993,10 @@ select:hover:not(:disabled) {
   overflow-wrap: anywhere;
   color: var(--paper-muted);
   font-size: 0.61rem;
+}
+
+.catalog-results button .catalog-results__reason {
+  color: var(--amber);
 }
 
 .catalog-results button b {
@@ -2027,6 +2051,26 @@ select:hover:not(:disabled) {
 
 .catalog-selection .button {
   margin-top: auto;
+  justify-content: center;
+}
+
+.catalog-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--ink-1);
+}
+
+.catalog-dialog__footer span {
+  margin-right: auto;
+  color: var(--paper-muted);
+  font-size: 0.64rem;
+}
+
+.catalog-dialog__footer .button {
   justify-content: center;
 }
 
@@ -2819,6 +2863,11 @@ select:hover:not(:disabled) {
   }
 
   .catalog-dialog__toolbar {
+    padding-inline: 14px;
+  }
+
+  .catalog-dialog__status-line,
+  .catalog-dialog__footer {
     padding-inline: 14px;
   }
 
