@@ -1,10 +1,3 @@
-Ludd’s Blessing is free software licensed under the GNU General Public License,
-version 3 or (at your option) any later version.
-
-Copyright © 2026 Ludd’s Blessing contributors.
-
-SPDX-License-Identifier: GPL-3.0-or-later
-
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 

@@ -105,9 +105,10 @@ discarded rather than accumulating for the lifetime of the app.
 ## Distribution
 
 Ludd’s Blessing is free software licensed under the GNU General Public License,
-version 3 or (at your option) any later version. See `LICENSE.md`. Binary
-releases include the notices required by third-party dependencies, and public
-GitHub releases include source archives for the corresponding revision.
+version 3 or (at your option) any later version. See `COPYRIGHT.md` and
+`LICENSE.md`. Binary releases include the notices required by third-party
+dependencies, and public GitHub releases include source archives for the
+corresponding revision.
 
 See `SECURITY.md` for private vulnerability reporting. Starsector is created
 by Fractal Softworks; Ludd’s Blessing is an independent community tool and does

@@ -24,8 +24,9 @@ After approval, dispatch **Promote Windows beta** with the accepted run ID and t
 
 Promotion in the public source repository produces a public prerelease. GitHub
 also exposes source archives for the tagged revision. Confirm the release
-contains the accepted binaries, checksum manifest, GPL license, security
-policy, dependency notices, provenance, and SBOM before sharing it.
+contains the accepted binaries, checksum manifest, copyright notice, GPL
+license, security policy, dependency notices, provenance, and SBOM before
+sharing it.
 
 ## Local packaging
 

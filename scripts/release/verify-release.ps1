@@ -88,6 +88,7 @@ if (-not $toolchainMatch.Success) {
 $required = @(
     'Cargo.lock',
     'pnpm-lock.yaml',
+    'COPYRIGHT.md',
     'LICENSE.md',
     'SECURITY.md',
     'THIRD_PARTY_NOTICES.md',

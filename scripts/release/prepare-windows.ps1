@@ -64,6 +64,7 @@ New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
 Copy-Item -LiteralPath $portableCandidates[0] -Destination (Join-Path $stagingDirectory "$baseName-portable.exe")
 Copy-Item -LiteralPath $installerCandidates[0].FullName -Destination (Join-Path $stagingDirectory "$baseName-installer.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $stagingDirectory 'PRODUCT_NOTICES.md')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'COPYRIGHT.md') -Destination (Join-Path $stagingDirectory 'COPYRIGHT.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE.md') -Destination (Join-Path $stagingDirectory 'LICENSE.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'SECURITY.md') -Destination (Join-Path $stagingDirectory 'SECURITY.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\beta-user-guide.md') -Destination (Join-Path $stagingDirectory 'README.md')

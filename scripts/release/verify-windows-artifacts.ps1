@@ -77,6 +77,7 @@ function Read-And-VerifyManifest {
 $installerName = "$baseName-installer.exe"
 $portableName = "$baseName-portable.exe"
 $stagedPayloadNames = @(
+    'COPYRIGHT.md',
     'DEPENDENCY_NOTICES.md',
     $installerName,
     'LICENSE.md',
@@ -146,6 +147,7 @@ if ([DateTimeOffset]::MinValue -eq [DateTimeOffset]::Parse([string]$provenance.c
 }
 
 $sourceCopies = [ordered]@{
+    'COPYRIGHT.md' = 'COPYRIGHT.md'
     'LICENSE.md' = 'LICENSE.md'
     'PRODUCT_NOTICES.md' = 'THIRD_PARTY_NOTICES.md'
     'README.md' = 'docs\beta-user-guide.md'

@@ -1,6 +1,6 @@
 # Ludd’s Blessing 0.2.0 community beta
 
-This is an unsigned Windows 10/11 x64 beta. Windows SmartScreen may show an “unrecognized app” warning because the binaries are not code-signed. Verify the SHA-256 values in the accompanying checksum manifest before running the installer or portable executable. The application and its source are licensed under GPL-3.0-or-later; see the included `LICENSE.md`.
+This is an unsigned Windows 10/11 x64 beta. Windows SmartScreen may show an “unrecognized app” warning because the binaries are not code-signed. Verify the SHA-256 values in the accompanying checksum manifest before running the installer or portable executable. The application and its source are licensed under GPL-3.0-or-later; see the included `COPYRIGHT.md` and `LICENSE.md`.
 
 Ludd’s Blessing is an independent community tool and is not affiliated with or endorsed by Fractal Softworks. It does not bundle Starsector files or assets.
 
@@ -21,7 +21,7 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 
 - `*-installer.exe` is the per-user NSIS installer.
 - `*-portable.exe` runs without installation. Keep its application-data backup directory when moving or removing it.
-- The `.zip` contains both binaries, the GPL license, security policy,
+- The `.zip` contains both binaries, the copyright notice, GPL license, security policy,
   notices, descriptive provenance, the source/build SBOM, and an internal
   checksum manifest.
 

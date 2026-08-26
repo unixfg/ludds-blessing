@@ -16,5 +16,5 @@ Ludd’s Blessing does not bundle Starsector code, data, art, fonts, sound,
 logos, or screenshots.
 
 The application itself is distributed under GPL-3.0-or-later as described in
-`LICENSE.md`. That license does not replace or restrict a third-party
-component’s own license.
+`COPYRIGHT.md` and `LICENSE.md`. That license does not replace or restrict a
+third-party component’s own license.

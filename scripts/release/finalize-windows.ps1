@@ -15,6 +15,7 @@ $requiredPatterns = @(
     '*-portable.exe',
     'PRODUCT_NOTICES.md',
     'DEPENDENCY_NOTICES.md',
+    'COPYRIGHT.md',
     'LICENSE.md',
     'SECURITY.md',
     'README.md',
