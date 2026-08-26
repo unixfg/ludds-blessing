@@ -394,7 +394,7 @@ jobs:
         with:
           tag_name: ${{ needs.build.outputs.tag }}
           target_commitish: ${{ needs.build.outputs.source_sha }}
-          name: Ludd's Blessing ${{ needs.build.outputs.tag }}
+          name: ${{ needs.build.outputs.tag }}
           draft: true
           prerelease: true
           make_latest: false
@@ -431,7 +431,7 @@ jobs:
 
           release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
           jq -e --arg tag "$RELEASE_TAG" \
-            '.draft == true and .prerelease == true and .tag_name == $tag' \
+            '.draft == true and .prerelease == true and .tag_name == $tag and .name == $tag' \
             <<<"$release_json" >/dev/null || {
               echo 'The uploaded release is not the expected unpublished prerelease.' >&2
               exit 1
@@ -446,6 +446,6 @@ jobs:
             -F prerelease=true \
             -f make_latest=false)"
           jq -e --arg tag "$RELEASE_TAG" \
-            '.draft == false and .prerelease == true and .tag_name == $tag' \
+            '.draft == false and .prerelease == true and .tag_name == $tag and .name == $tag' \
             <<<"$published" >/dev/null
           echo "Published $(jq -r '.html_url' <<<"$published")"
