@@ -74,14 +74,12 @@ function Read-And-VerifyManifest {
     }
 }
 
-$installerName = "$baseName-installer.exe"
-$portableName = "$baseName-portable.exe"
+$executableName = "$baseName.exe"
 $stagedPayloadNames = @(
     'COPYRIGHT.md',
     'DEPENDENCY_NOTICES.md',
-    $installerName,
+    $executableName,
     'LICENSE.md',
-    $portableName,
     'PRODUCT_NOTICES.md',
     'PROVENANCE.json',
     'README.md',
@@ -160,7 +158,7 @@ foreach ($copy in $sourceCopies.GetEnumerator()) {
     }
 }
 
-foreach ($binaryName in @($installerName, $portableName)) {
+foreach ($binaryName in @($executableName)) {
     $binaryPath = Join-Path $staging $binaryName
     $binary = Get-Item -LiteralPath $binaryPath
     if ($binary.Length -lt 1MB) {

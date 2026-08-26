@@ -34,35 +34,17 @@ $buildRoots = if ([string]::IsNullOrWhiteSpace($BuildTargetRoot)) {
     @([System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildTargetRoot)))
 }
 
-$portableCandidates = @(
+$executableCandidates = @(
     $buildRoots |
         ForEach-Object { Join-Path $_ 'release\ludds-blessing.exe' } |
         Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
 )
-if ($portableCandidates.Count -ne 1) {
-    throw "Expected exactly one portable executable, found $($portableCandidates.Count)."
-}
-
-$nsisDirectories = @(
-    $buildRoots |
-        ForEach-Object { Join-Path $_ 'release\bundle\nsis' } |
-        Where-Object { Test-Path -LiteralPath $_ -PathType Container }
-)
-$installerCandidates = @(
-    $nsisDirectories |
-        ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter '*.exe' -File } |
-        Where-Object {
-            $_.Name -match '(?i)(setup|installer)' -and
-            $_.Name -match [regex]::Escape($version)
-        }
-)
-if ($installerCandidates.Count -ne 1) {
-    throw "Expected exactly one NSIS installer, found $($installerCandidates.Count)."
+if ($executableCandidates.Count -ne 1) {
+    throw "Expected exactly one standalone executable, found $($executableCandidates.Count)."
 }
 
 New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
-Copy-Item -LiteralPath $portableCandidates[0] -Destination (Join-Path $stagingDirectory "$baseName-portable.exe")
-Copy-Item -LiteralPath $installerCandidates[0].FullName -Destination (Join-Path $stagingDirectory "$baseName-installer.exe")
+Copy-Item -LiteralPath $executableCandidates[0] -Destination (Join-Path $stagingDirectory "$baseName.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $stagingDirectory 'PRODUCT_NOTICES.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'COPYRIGHT.md') -Destination (Join-Path $stagingDirectory 'COPYRIGHT.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE.md') -Destination (Join-Path $stagingDirectory 'LICENSE.md')

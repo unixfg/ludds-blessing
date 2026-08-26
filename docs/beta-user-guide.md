@@ -1,13 +1,13 @@
 # Ludd’s Blessing 0.2.1 community beta
 
-This is an unsigned Windows 10/11 x64 beta. Windows SmartScreen may show an “unrecognized app” warning because the binaries are not code-signed. Verify the SHA-256 values in the accompanying checksum manifest before running the installer or portable executable. The application and its source are licensed under GPL-3.0-or-later; see the included `COPYRIGHT.md` and `LICENSE.md`.
+This is an unsigned Windows 10/11 x64 beta. Windows SmartScreen may show an “unrecognized app” warning because the executable is not code-signed. Verify the SHA-256 digest shown by GitHub for the executable before running it. The tagged source archives on the same release page contain the source, license, and build scripts.
 
 Ludd’s Blessing is an independent community tool and is not affiliated with or endorsed by Fractal Softworks. It does not bundle Starsector files or assets.
 
 ## Safety boundaries
 
 - All save processing stays on the local computer. The app has no telemetry, updater, or network feature.
-- The NSIS installer bundles Microsoft’s WebView2 offline installer and makes no runtime download. The portable executable requires WebView2 to already be installed and does not fetch it. Microsoft may service the installed WebView2 runtime independently; Ludd’s Blessing itself has no updater.
+- The standalone executable requires Microsoft’s WebView2 Evergreen Runtime to already be installed and does not fetch it. WebView2 is normally present on current Windows 10 and 11 systems; [Microsoft provides installation guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution) for systems where it is missing. Microsoft may service that runtime independently; Ludd’s Blessing itself has no updater.
 - The editor does not install, generate, or require a Starsector mod.
 - Only uncompressed Starsector `0.98a-RC8` saves using format `0.6` can be changed. Other detected saves are read-only.
 - Starsector may remain running while you edit a save that is not currently loaded. Every save the current log session indicates may still be active remains blocked from in-place apply, restore, protected-save unlock, and recovery operations.
@@ -19,11 +19,9 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 
 ## Choosing a download
 
-- `*-installer.exe` is the per-user NSIS installer.
-- `*-portable.exe` runs without installation. Keep its application-data backup directory when moving or removing it.
-- The `.zip` contains both binaries, the copyright notice, GPL license,
-  notices, descriptive provenance, the source/build SBOM, and an internal
-  checksum manifest.
+- `LuddsBlessing_<version>_windows-x64.exe` is the complete application. It runs without installation and creates backups and settings in the normal per-user application-data directory; moving or deleting the executable does not remove that data.
+- There is no installer or updater; this is the only application download.
+- If an earlier installer-based beta is present, uninstall that copy and remove its Start-menu shortcut before using the standalone executable so there is only one version to launch. Preserve the per-user application-data directory containing settings and backups.
 
 ## Finding saves
 
@@ -123,10 +121,10 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 ## Verify a download in PowerShell
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.1_windows-x64-installer.exe
+Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.1_windows-x64.exe
 ```
 
-Compare the displayed hash with `LuddsBlessing_0.2.1_windows-x64-SHA256SUMS.txt`. A mismatch means the file must not be run.
+Compare the displayed hash with the `sha256:` digest GitHub shows beside the executable on the release page. A mismatch means the file must not be run.
 
 ## Beta acceptance checks
 

@@ -60,14 +60,8 @@ if ([string]$package.packageManager -ne "pnpm@$($package.engines.pnpm)") {
 if ($tauri.bundle.createUpdaterArtifacts -ne $false) {
     throw 'Updater artifacts must remain disabled for the local-only beta.'
 }
-if ($tauri.bundle.licenseFile -ne '../LICENSE.md') {
-    throw 'Tauri bundles must include the project license.'
-}
-if ($tauri.bundle.windows.webviewInstallMode.type -ne 'offlineInstaller') {
-    throw 'The Windows installer must bundle the offline WebView2 installer; network bootstrap modes are forbidden.'
-}
-if ($tauri.bundle.windows.webviewInstallMode.silent -ne $true) {
-    throw 'The bundled WebView2 offline installer must run silently.'
+if ($tauri.bundle.active -ne $false) {
+    throw 'Tauri bundling must remain disabled; Windows releases are a single standalone executable.'
 }
 
 $csp = [string]$tauri.app.security.csp

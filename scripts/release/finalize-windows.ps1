@@ -11,8 +11,7 @@ $artifactRoot = Split-Path -Parent $staging
 $baseName = Split-Path -Leaf $staging
 
 $requiredPatterns = @(
-    '*-installer.exe',
-    '*-portable.exe',
+    "$baseName.exe",
     'PRODUCT_NOTICES.md',
     'DEPENDENCY_NOTICES.md',
     'COPYRIGHT.md',
@@ -52,11 +51,11 @@ if (Test-Path -LiteralPath $outerManifest) {
     throw "Release checksum manifest already exists; refusing to overwrite it: $outerManifest"
 }
 
-$publicAssets = @(
+$candidateFiles = @(
     Get-ChildItem -LiteralPath $staging -File
     Get-Item -LiteralPath $archivePath
 ) | Sort-Object Name
-$outerLines = foreach ($file in $publicAssets) {
+$outerLines = foreach ($file in $candidateFiles) {
     $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $($file.Name)"
 }

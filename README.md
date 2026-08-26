@@ -106,9 +106,11 @@ discarded rather than accumulating for the lifetime of the app.
 
 Ludd’s Blessing is free software licensed under the GNU General Public License,
 version 3 or (at your option) any later version. See `COPYRIGHT.md` and
-`LICENSE.md`. Binary releases include the notices required by third-party
-dependencies, and public GitHub releases include source archives for the
-corresponding revision.
+`LICENSE.md`. A Windows release has one standalone executable and no installer.
+The same GitHub release page provides source archives for the corresponding
+tag. Retained release candidates include the SBOM, provenance, notices, and
+checksum manifests used during review; those review files are not separate
+public downloads.
 
 Suspected vulnerabilities can be reported privately through
 [GitHub's private vulnerability reporting form](https://github.com/unixfg/ludds-blessing/security/advisories/new).

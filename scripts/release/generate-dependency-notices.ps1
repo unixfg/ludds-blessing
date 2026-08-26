@@ -147,7 +147,7 @@ $lines.Add('This conservative inventory was generated from the locked Rust sourc
 $lines.Add('')
 $lines.Add("Ludd’s Blessing contains no Starsector code, data, art, fonts, sound, logos, or screenshots.")
 $lines.Add('')
-$lines.Add("The Windows installer embeds Microsoft’s separately licensed WebView2 Evergreen Standalone Installer and is packaged with NSIS through Tauri. These installer components are not enumerated as Cargo or JavaScript packages below.")
+$lines.Add("The standalone Windows executable uses Microsoft’s separately installed WebView2 Evergreen Runtime. WebView2 is not bundled with Ludd’s Blessing and is not enumerated as a Cargo or JavaScript package below.")
 $lines.Add('')
 $lines.Add('## Rust dependencies')
 $lines.Add('')

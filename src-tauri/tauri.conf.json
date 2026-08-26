@@ -29,22 +29,7 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": "all",
-    "category": "Utility",
-    "shortDescription": "Local-first Starsector save editor",
-    "longDescription": "Inspect and safely edit supported Starsector saves with backups and semantic review.",
-    "licenseFile": "../LICENSE.md",
-    "createUpdaterArtifacts": false,
-    "windows": {
-      "allowDowngrades": false,
-      "webviewInstallMode": {
-        "type": "offlineInstaller",
-        "silent": true
-      },
-      "nsis": {
-        "installMode": "currentUser"
-      }
-    }
+    "active": false,
+    "createUpdaterArtifacts": false
   }
 }
