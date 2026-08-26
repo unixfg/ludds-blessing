@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+# Preserve Windows launcher semantics if one is added later.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Generated application artwork and release payloads are binary.
+*.icns binary
+*.ico binary
+*.png binary
+*.exe binary
+*.zip binary
+
+# ts-rs emits spaces before documentation-comment line breaks.
+src-tauri/bindings/*.ts whitespace=-blank-at-eol

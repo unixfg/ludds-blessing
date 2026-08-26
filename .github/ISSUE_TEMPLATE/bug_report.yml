@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible problem without sharing private save data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach a real save, game/mod asset, credential, or identifying path. Use redacted diagnostics and synthetic examples. Report security issues through the private link shown on the issue chooser.
+  - type: input
+    id: version
+    attributes:
+      label: Ludd’s Blessing version
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the expected and observed behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic data and omit private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste only the application’s redacted diagnostics export.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Data-safety confirmation
+      options:
+        - label: I have not included a real save, game/mod asset, credential, or personally identifying path.
+          required: true

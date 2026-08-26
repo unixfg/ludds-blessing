@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/save-core",
+  "src-tauri",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Ludd's Blessing"]
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "deny"

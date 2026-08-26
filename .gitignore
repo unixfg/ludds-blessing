@@ -1,0 +1,44 @@
+node_modules/
+.pnpm-store/
+dist/
+target/
+.tools/
+artifacts/
+.turbo/
+.vite/
+coverage/
+*.tsbuildinfo
+*.log
+*.tmp
+*.journal
+.DS_Store
+Thumbs.db
+
+# Local save fixtures and game data must never be committed.
+testdata-local/
+fixtures-local/
+**/campaign.xml
+**/campaign.xml.bak
+**/descriptor.xml
+**/descriptor.xml.bak
+
+# Local signing and packaging material.
+*.pfx
+*.p12
+*.key
+*.pem
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+.netrc
+.pypirc
+.cargo/credentials
+.cargo/credentials.toml
+
+# Additional save formats and editor backups.
+*.sav
+*.save

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ludd's Blessing survey ledger mark">
+  <rect width="512" height="512" rx="104" fill="#101923"/>
+  <rect x="86" y="68" width="340" height="376" rx="42" fill="#172633" stroke="#d7a84b" stroke-width="18"/>
+  <path d="M144 156h224M144 222h132M144 288h96M144 354h224" fill="none" stroke="#f1e5c8" stroke-linecap="round" stroke-width="18"/>
+  <path d="M286 270c30-55 72-76 120-62-8 49-43 89-100 92" fill="none" stroke="#52d4df" stroke-linecap="round" stroke-linejoin="round" stroke-width="20"/>
+  <path d="M286 270c17 13 29 33 36 60" fill="none" stroke="#52d4df" stroke-linecap="round" stroke-width="20"/>
+  <circle cx="286" cy="270" r="13" fill="#ff8b72"/>
+</svg>

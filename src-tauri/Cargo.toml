@@ -1,0 +1,45 @@
+[package]
+name = "ludds-blessing"
+version = "0.2.0"
+description = "A local-first Starsector save editor"
+authors = ["Ludd's Blessing contributors"]
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "ludds_blessing_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+csv = "1"
+dirs = "6"
+encoding_rs = "0.8"
+fs2 = "0.4"
+hex = "0.4"
+save-core = { path = "../crates/save-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "macros"] }
+ts-rs = { version = "11", features = ["serde-compat"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows-sys = { version = "0.59", features = [
+  "Win32_Storage_FileSystem",
+] }

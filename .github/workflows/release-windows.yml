@@ -1,0 +1,156 @@
+name: Windows beta candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Candidate tag matching the package version (for example vX.Y.Z-beta.1)
+        required: true
+        type: string
+
+concurrency:
+  group: windows-beta-candidate-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: 11.19.0
+  NODE_VERSION: 24.19.0
+
+jobs:
+  build:
+    name: Build unsigned Windows x64 candidate
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require the repository default branch
+        shell: pwsh
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:SOURCE_BRANCH -ne $env:DEFAULT_BRANCH) {
+            throw "Release candidates must be built from '$env:DEFAULT_BRANCH', not '$env:SOURCE_BRANCH'."
+          }
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $expectedTag = '^v' + [regex]::Escape([string]$version) + '-[0-9A-Za-z][0-9A-Za-z.-]*$'
+          if ($env:RELEASE_TAG -notmatch $expectedTag) {
+            throw "Windows beta candidates require a v$version-* prerelease tag."
+          }
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-windows
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Verify release metadata and repository hygiene
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: ./scripts/release/verify-release.ps1 -Tag $env:RELEASE_TAG
+      - name: Audit the production npm graph
+        run: pnpm audit --prod --audit-level high
+      - name: Install the reviewed cargo-audit release
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit the locked Rust graph
+        run: cargo audit
+      - name: Test frontend
+        run: pnpm test
+      - name: Test Rust workspace
+        run: cargo test --workspace --all-targets --locked
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build unsigned offline NSIS installer and portable executable
+        run: pnpm tauri build --bundles nsis
+
+      - name: Stage binaries and dependency notices
+        id: stage
+        shell: pwsh
+        run: |
+          $null = ./scripts/release/prepare-windows.ps1 -OutputRoot artifacts
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          "directory=artifacts/LuddsBlessing_${version}_windows-x64" >> $env:GITHUB_OUTPUT
+          "root=artifacts" >> $env:GITHUB_OUTPUT
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          # Scan the checked-out locked source graph as well as the staged
+          # binaries; statically linked Rust dependencies are not all
+          # recoverable from an unauditable executable alone.
+          path: .
+          format: spdx-json
+          output-file: ${{ steps.stage.outputs.directory }}/SBOM.spdx.json
+          upload-artifact: false
+
+      - name: Bind provenance to this candidate run
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          ./scripts/release/new-release-provenance.ps1 `
+            -StagingDirectory '${{ steps.stage.outputs.directory }}' `
+            -Tag $env:RELEASE_TAG `
+            -SourceCommit $env:GITHUB_SHA `
+            -Repository $env:GITHUB_REPOSITORY `
+            -WorkflowRunId $env:GITHUB_RUN_ID
+
+      - name: Finalize archive and SHA-256 manifests
+        shell: pwsh
+        run: ./scripts/release/finalize-windows.ps1 -StagingDirectory '${{ steps.stage.outputs.directory }}'
+
+      - name: Verify the complete candidate artifact
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          ./scripts/release/verify-windows-artifacts.ps1 `
+            -ArtifactRoot '${{ steps.stage.outputs.root }}' `
+            -Tag $env:RELEASE_TAG `
+            -SourceCommit $env:GITHUB_SHA `
+            -Repository $env:GITHUB_REPOSITORY `
+            -WorkflowRunId $env:GITHUB_RUN_ID
+
+      - name: Upload immutable review candidate
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ludds-blessing-${{ inputs.tag }}-windows-x64
+          path: artifacts/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record promotion inputs
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value @"
+          ## Candidate ready for review
+
+          - Tag: ``$env:RELEASE_TAG``
+          - Source: ``$env:GITHUB_SHA``
+          - Candidate workflow run ID: ``$env:GITHUB_RUN_ID``
+          - Actions artifact digest: ``${{ steps.upload.outputs.artifact-digest }}``
+
+          Smoke-test the retained artifact, then supply this run ID and tag to
+          the **Promote Windows beta** workflow. Promotion downloads this exact
+          artifact and does not rebuild it.
+          "@

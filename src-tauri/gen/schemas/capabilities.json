@@ -1,0 +1,1 @@
+{"main-window":{"identifier":"main-window","description":"Core window capabilities only; save access is mediated by typed Rust commands.","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open"]}}

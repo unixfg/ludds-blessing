@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private vulnerability report
+    url: https://github.com/unixfg/ludds-blessing/security/advisories/new
+    about: Report suspected vulnerabilities privately; do not open a public issue.

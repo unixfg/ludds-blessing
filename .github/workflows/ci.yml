@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: 11.19.0
+  NODE_VERSION: 24.19.0
+
+jobs:
+  frontend:
+    name: Frontend (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm typecheck
+      - name: Test
+        run: pnpm test
+      - name: Build web assets
+        run: pnpm build
+
+  save-core:
+    name: Save core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: save-core-${{ matrix.os }}
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Test platform-neutral core
+        run: cargo test --locked -p save-core --all-targets
+      - name: Lint platform-neutral core
+        if: runner.os == 'Linux'
+        run: cargo clippy --locked -p save-core --all-targets -- -D warnings
+
+  desktop-windows:
+    name: Tauri shell (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate release PowerShell and metadata
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -LiteralPath scripts/release -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              $failed = $true
+              $parseErrors | ForEach-Object { Write-Error $_.Message }
+            }
+          }
+          if ($failed) { throw 'A release script has a PowerShell syntax error.' }
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          ./scripts/release/verify-release.ps1 -Tag "v$version-ci"
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: desktop-windows
+      - name: Check the complete Rust workspace
+        run: cargo check --workspace --all-targets --locked
+      - name: Test the Windows Tauri shell
+        run: cargo test --locked -p ludds-blessing --lib --tests
+      - name: Verify generated IPC bindings
+        shell: pwsh
+        run: |
+          cargo test --locked -p ludds-blessing --test bindings export_ipc_bindings
+          if (git diff --exit-code -- src-tauri/bindings) {
+            Write-Host 'Generated IPC bindings are current.'
+          } else {
+            throw 'Run the ts-rs binding export test and commit src-tauri/bindings.'
+          }
+      - name: Lint the Tauri shell
+        run: cargo clippy --locked -p ludds-blessing --all-targets -- -D warnings
+
+  desktop-native:
+    name: Tauri shell (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            cache-key: desktop-linux
+          - os: macos-latest
+            name: macOS
+            cache-key: desktop-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux Tauri prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ matrix.cache-key }}
+      - name: Check the native Tauri shell
+        run: cargo check --locked -p ludds-blessing --all-targets
+      - name: Test the native Tauri shell
+        run: cargo test --locked -p ludds-blessing --lib --tests
+      - name: Lint the native Tauri shell
+        run: cargo clippy --locked -p ludds-blessing --all-targets -- -D warnings

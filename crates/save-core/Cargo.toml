@@ -1,0 +1,31 @@
+[package]
+name = "save-core"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fs2 = "0.4"
+hex = "0.4"
+indexmap = { version = "2", features = ["serde"] }
+quick-xml = "0.41"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"
