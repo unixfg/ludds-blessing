@@ -12,15 +12,15 @@ workspace = true
 fs2 = "0.4"
 hex = "0.4"
 indexmap = { version = "2", features = ["serde"] }
-quick-xml = "0.41"
+quick-xml = "0.42"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",
   "Win32_System_Diagnostics_ToolHelp",
