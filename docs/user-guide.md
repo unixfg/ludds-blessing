@@ -1,4 +1,4 @@
-# Ludd’s Blessing 0.2.1
+# Ludd’s Blessing 0.2.2
 
 This is an unsigned Windows 10/11 x64 release. Windows SmartScreen may show an “unrecognized app” warning because the executable is not code-signed. Verify the SHA-256 digest shown by GitHub for the executable before running it. The tagged source archives on the same release page contain the source, license, and build scripts.
 
@@ -28,6 +28,9 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 - **Refresh** re-runs bounded discovery. On Windows, the app verifies detected
   Starsector installations and reads each installation's configured save path
   from `vmparams`; this includes valid custom absolute save folders.
+- **Open editor** and **Open preview** automatically repeat discovery before
+  loading the selected save, so a manual refresh is not required to pick up a
+  campaign that changed while the library was open.
 - Discovery also checks the Windows Known Documents folder (including folder
   redirection), the traditional `Documents\Starsector` location, common
   OneDrive Documents locations, and narrowly matched legacy VirtualStore
@@ -121,7 +124,7 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 ## Verify a download in PowerShell
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.1_windows-x64.exe
+Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.2_windows-x64.exe
 ```
 
 Compare the displayed hash with the `sha256:` digest GitHub shows beside the executable on the release page. A mismatch means the file must not be run.

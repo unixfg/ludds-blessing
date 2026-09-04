@@ -311,7 +311,7 @@ export const demoBackups = (): BackupSummary[] => [
 ];
 
 export const demoDiagnostics = (): Diagnostics => ({
-    appVersion: "0.2.1-demo",
+    appVersion: "0.2.2-demo",
   os: "Browser preview",
   entries: [
     "Tauri runtime not detected; no filesystem commands are available.",

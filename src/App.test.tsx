@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { api } from "./api";
-import { demoSnapshot } from "./demo";
+import { demoSaves, demoSnapshot } from "./demo";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -133,6 +133,69 @@ describe("Ludd’s Blessing app shell", () => {
     expect(screen.getByText("Read-only preview")).toBeInTheDocument();
   });
 
+  it("keeps save-library navigation separate from the open editor", async () => {
+    render(<App />);
+    await screen.findByText("Mira Venn");
+
+    const libraryNavigation = screen.getByRole("navigation", { name: "Save library navigation" });
+    expect(within(libraryNavigation).getByRole("button", { name: "Saves" })).toBeInTheDocument();
+    expect(within(libraryNavigation).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(within(libraryNavigation).queryByRole("button", { name: "Character" })).not.toBeInTheDocument();
+    expect(within(libraryNavigation).queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    await screen.findByRole("heading", { name: "Name and portrait" });
+
+    const editorNavigation = screen.getByRole("navigation", { name: "Save editor navigation" });
+    expect(within(editorNavigation).getByRole("button", { name: "Character" })).toBeInTheDocument();
+    expect(within(editorNavigation).getByRole("button", { name: "Review" })).toBeInTheDocument();
+    expect(within(editorNavigation).queryByRole("button", { name: "Saves" })).not.toBeInTheDocument();
+    expect(within(editorNavigation).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(await screen.findByRole("heading", { name: "Campaign records" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Save library navigation" })).toBeInTheDocument();
+  });
+
+  it("refreshes the save registry before opening the selected save", async () => {
+    const scanSaves = vi.spyOn(api, "scanSaves");
+    const openSave = vi.spyOn(api, "openSave");
+    render(<App />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    await screen.findByRole("heading", { name: "Name and portrait" });
+
+    expect(scanSaves).toHaveBeenCalledTimes(2);
+    expect(openSave).toHaveBeenCalledTimes(1);
+    expect(scanSaves.mock.invocationCallOrder[1]).toBeLessThan(openSave.mock.invocationCallOrder[0]);
+  });
+
+  it("does not open a save that disappeared during the automatic refresh", async () => {
+    vi.spyOn(api, "scanSaves")
+      .mockResolvedValueOnce(demoSaves())
+      .mockResolvedValueOnce([]);
+    const openSave = vi.spyOn(api, "openSave");
+    render(<App />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+
+    expect(await screen.findByRole("heading", { name: "No save folders found" })).toBeInTheDocument();
+    expect(screen.getByText("That save is no longer available. The library was refreshed.")).toBeInTheDocument();
+    expect(openSave).not.toHaveBeenCalled();
+  });
+
+  it("opens read-only saves inside the separate editor context", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open preview" }));
+
+    expect(await screen.findByRole("heading", { name: "Name and portrait" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Save editor navigation" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Saves" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Current balance")).toBeDisabled();
+    expect(screen.getByText("Opened in read-only preview mode.")).toBeInTheDocument();
+  });
+
   it("stages a supported field and prepares a semantic review", async () => {
     render(<App />);
     const openButtons = await screen.findAllByRole("button", { name: "Open editor" });
@@ -155,7 +218,37 @@ describe("Ludd’s Blessing app shell", () => {
     expect(screen.getByText("90000000")).toBeInTheDocument();
   });
 
-  it("releases superseded native sessions after a replacement opens", async () => {
+  it("returns to the refreshed save library after a successful save", async () => {
+    const scanSaves = vi.spyOn(api, "scanSaves");
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    fireEvent.change(await screen.findByLabelText("Current balance"), { target: { value: "90000000" } });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+    await screen.findByRole("heading", { name: "Review staged changes" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create backup & apply" }));
+
+    expect(await screen.findByRole("heading", { name: "Campaign records" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Save library navigation" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Save editor navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Character" })).not.toBeInTheDocument();
+    await waitFor(() => expect(scanSaves).toHaveBeenCalledTimes(3));
+  });
+
+  it("does not close the editor with staged work without confirmation", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    fireEvent.change(await screen.findByLabelText("Current balance"), { target: { value: "90000000" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/discard its staged changes/i));
+    expect(screen.getByRole("navigation", { name: "Save editor navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review 1 changes/i })).toBeInTheDocument();
+  });
+
+  it("releases the native session when the editor closes", async () => {
     const first = demoSnapshot("demo-mira");
     first.sessionId = "session-first";
     const second = demoSnapshot("demo-mira");
@@ -168,7 +261,8 @@ describe("Ludd’s Blessing app shell", () => {
     render(<App />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
     await screen.findByRole("heading", { name: "Name and portrait" });
-    fireEvent.click(screen.getByRole("button", { name: "Saves" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    await screen.findByRole("heading", { name: "Campaign records" });
     fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
 
     await waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-first"));
@@ -702,7 +796,7 @@ describe("Ludd’s Blessing app shell", () => {
     await screen.findByRole("heading", { name: "Name and portrait" });
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh save data" }));
-    await waitFor(() => expect(scanSaves).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(scanSaves).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(openSave).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Library and open save refreshed.")).toBeInTheDocument();
   });
@@ -716,7 +810,7 @@ describe("Ludd’s Blessing app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh save data" }));
     expect(screen.getByRole("button", { name: /Review 1 changes/i })).toBeInTheDocument();
-    expect(scanSaves).toHaveBeenCalledTimes(1);
+    expect(scanSaves).toHaveBeenCalledTimes(2);
   });
 
   it("resets an inventory section without leaving staged changes", async () => {

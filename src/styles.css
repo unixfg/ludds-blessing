@@ -2578,7 +2578,7 @@ select:hover:not(:disabled) {
 
   .sidebar nav {
     display: grid;
-    grid-template-columns: repeat(9, minmax(58px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
     gap: 2px;
     overflow-x: auto;
     overscroll-behavior-x: contain;
@@ -2886,7 +2886,7 @@ select:hover:not(:disabled) {
 
 @media (max-width: 520px) {
   .sidebar nav {
-    grid-template-columns: repeat(9, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
     overflow-x: hidden;
   }
 

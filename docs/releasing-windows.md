@@ -12,8 +12,8 @@ publishes it as the latest GitHub Release.
 3. Create and push the stable version tag:
 
    ```bash
-   git tag -a v0.2.1 -m "Ludd's Blessing v0.2.1"
-   git push origin v0.2.1
+   git tag -a v0.2.2 -m "Ludd's Blessing v0.2.2"
+   git push origin v0.2.2
    ```
 
 The **Windows release** workflow then installs the locked dependencies, builds

@@ -1,5 +1,6 @@
 import {
   ArchiveRestore,
+  ArrowLeft,
   BadgeCheck,
   BookOpenCheck,
   Building2,
@@ -60,8 +61,14 @@ import { isApiFailure } from "./types";
 
 type Page = "saves" | "character" | "inventory" | "reputation" | "officers" | "colonies" | "review" | "backups" | "settings";
 
-const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Save }> = [
+type NavItem = { id: Page; label: string; icon: typeof Save };
+
+const LIBRARY_NAV_ITEMS: NavItem[] = [
   { id: "saves", label: "Saves", icon: HardDrive },
+  { id: "settings", label: "Settings", icon: Settings },
+];
+
+const EDITOR_NAV_ITEMS: NavItem[] = [
   { id: "character", label: "Character", icon: UserRound },
   { id: "inventory", label: "Inventory", icon: PackageOpen },
   { id: "reputation", label: "Reputation", icon: Shield },
@@ -69,8 +76,9 @@ const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Save }> = [
   { id: "colonies", label: "Colonies", icon: Building2 },
   { id: "review", label: "Review", icon: BookOpenCheck },
   { id: "backups", label: "Backups", icon: DatabaseBackup },
-  { id: "settings", label: "Settings", icon: Settings },
 ];
+
+const RECOVERY_NAV_ITEMS = EDITOR_NAV_ITEMS.filter(({ id }) => id === "review");
 
 const editKey = (edit: Edit): string => {
   switch (edit.type) {
@@ -270,7 +278,7 @@ function SavesPage({ saves, busy, onRefresh, onChooseRoot, onOpen }: { saves: Sa
       <SectionHeader
         eyebrow="Save library"
         title="Campaign records"
-        description="Refresh checks each verified installation’s configured save folder plus bounded platform-standard save locations. Unsupported saves remain available as read-only records."
+        description="Opening a save refreshes discovery first. Refresh also checks each verified installation’s configured save folder plus bounded platform-standard locations. Unsupported saves remain available as read-only records."
         action={
           <div className="button-row">
             <button className="button button--secondary" type="button" onClick={onRefresh} disabled={busy}>
@@ -801,7 +809,7 @@ function SettingsPage({ diagnostics, rootPath, setRootPath, refreshToken, onRegi
         <div className="panel__heading"><div><p className="eyebrow">Privacy-safe report</p><h3>Diagnostics</h3></div><button className="button button--secondary" type="button" onClick={() => void onDiagnostics()}><FileSearch size={16} /> Generate</button></div>
         {diagnostics ? <div className="diagnostics"><div><strong>Version {diagnostics.appVersion}</strong><span>{diagnostics.os}</span></div><ul>{diagnostics.entries.map((entry) => <li key={entry}>{entry}</li>)}</ul><button className="button button--ghost" type="button" onClick={copyDiagnostics}><ClipboardCopy size={15} /> Copy report</button></div> : <p className="muted">Reports exclude save contents and redact user-specific path components by default.</p>}
       </section>
-      <section className="panel about-panel"><Orbit size={30} aria-hidden="true" /><div><h3>Ludd’s Blessing 0.2.1</h3><p>An independent, local-first community tool. Starsector is created by Fractal Softworks. No Starsector assets are bundled.</p></div></section>
+      <section className="panel about-panel"><Orbit size={30} aria-hidden="true" /><div><h3>Ludd’s Blessing 0.2.2</h3><p>An independent, local-first community tool. Starsector is created by Fractal Softworks. No Starsector assets are bundled.</p></div></section>
     </div>
   );
 }
@@ -926,10 +934,34 @@ export default function App() {
     if (draft.length > 0 && snapshot?.saveId !== saveId && !window.confirm("Discard the current staged changes and open another save?")) return;
     setBusy(true); setError(null);
     try {
+      const refreshedSaves = await api.scanSaves();
+      setSaves(refreshedSaves);
+      const refreshedSave = refreshedSaves.find((save) => save.id === saveId);
+      if (!refreshedSave) {
+        setToast("That save is no longer available. The library was refreshed.");
+        return;
+      }
+      if (refreshedSave.compressed || refreshedSave.compatibility === "unreadable") {
+        setToast("That save changed and can no longer be opened. The library was refreshed.");
+        return;
+      }
       const opened = await api.openSave(saveId);
-      setSnapshot(opened); setDraft([]); setReview(null); setReviewMode("edit"); setBackups([]); setPage(opened.writeCapability.editable ? "character" : "saves");
+      setSnapshot(opened); setDraft([]); setReview(null); setReviewMode("edit"); setBackups([]); setPage("character");
       if (!opened.writeCapability.editable) setToast("Opened in read-only preview mode.");
     } catch (caught) { setError(displayError(caught)); } finally { setBusy(false); }
+  };
+
+  const closeEditor = () => {
+    if ((draft.length > 0 || review !== null)
+      && !window.confirm("Close this save and discard its staged changes or pending review? No pending changes have been written.")) return;
+    setSnapshot(null);
+    setDraft([]);
+    setReview(null);
+    setReviewMode("edit");
+    setWarningAccepted(false);
+    setBackups([]);
+    setPage("saves");
+    void refreshSaves();
   };
 
   const refreshApplication = async () => {
@@ -949,7 +981,7 @@ export default function App() {
           const opened = await api.openSave(snapshot.saveId);
           setSnapshot(opened);
           setBackups([]);
-          if (page === "review") setPage(opened.writeCapability.editable ? "character" : "saves");
+          if (page === "review") setPage("character");
         } else {
           setSnapshot(null);
           setBackups([]);
@@ -1018,9 +1050,14 @@ export default function App() {
         setSnapshot(null);
         await refreshSaves();
         setPage("saves");
+      } else if (completedMode === "edit") {
+        setSnapshot(null);
+        setBackups([]);
+        setPage("saves");
+        await refreshSaves();
       } else {
-        if (snapshot && (completedMode === "restore" || mode.type === "replace_original")) setSnapshot(await api.openSave(snapshot.saveId));
-        setPage(completedMode === "restore" ? "backups" : "character");
+        if (snapshot) setSnapshot(await api.openSave(snapshot.saveId));
+        setPage("backups");
       }
       setReviewMode("edit");
     } catch (caught) {
@@ -1107,12 +1144,19 @@ export default function App() {
     else setPage(target);
   };
 
+  const libraryContext = page === "saves" || page === "settings";
+  const navItems = libraryContext
+    ? LIBRARY_NAV_ITEMS
+    : snapshot
+      ? EDITOR_NAV_ITEMS
+      : RECOVERY_NAV_ITEMS;
+
   return (
     <div className={`app-shell ${navCollapsed ? "app-shell--collapsed" : ""}`}>
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <aside className="sidebar">
         <div className="brand"><span className="brand__mark" aria-hidden="true"><Orbit /></span><div><strong>Ludd’s Blessing</strong><span>Campaign ledger</span></div></div>
-        <nav aria-label="Primary navigation">{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={page === id ? "is-active" : ""} aria-label={label} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}><Icon size={18} aria-hidden="true" /><span>{label}</span>{id === "review" && draft.length > 0 ? <b>{draft.length}</b> : null}</button>)}</nav>
+        <nav aria-label={libraryContext ? "Save library navigation" : "Save editor navigation"}>{navItems.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={page === id ? "is-active" : ""} aria-label={label} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}><Icon size={18} aria-hidden="true" /><span>{label}</span>{id === "review" && draft.length > 0 ? <b>{draft.length}</b> : null}</button>)}</nav>
         <button className="sidebar__collapse" type="button" onClick={() => setNavCollapsed((value) => !value)} aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}><PanelLeftClose size={17} /><span>Collapse</span></button>
       </aside>
 
@@ -1120,6 +1164,7 @@ export default function App() {
         <header className="topbar">
           <div>{snapshot ? <><strong>{snapshot.summary.characterName}</strong><span title={snapshot.summary.path}>{snapshot.summary.gameVersion} · {snapshot.summary.enabledMods.length} mods</span></> : <><strong>Local save editor</strong><span>No campaign open</span></>}</div>
           <div className="topbar__actions">
+            {snapshot ? <button className="button button--secondary" type="button" onClick={closeEditor} disabled={busy}><ArrowLeft size={15} aria-hidden="true" /> Close editor</button> : null}
             <button className="button button--secondary" type="button" onClick={() => void refreshApplication()} disabled={busy} aria-label="Refresh save data">
               <RefreshCw size={15} className={busy ? "spin" : ""} aria-hidden="true" /> Refresh
             </button>
