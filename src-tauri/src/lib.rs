@@ -4,6 +4,7 @@ pub mod error;
 pub mod game_settings;
 pub mod models;
 mod service;
+mod warning_acknowledgements;
 
 use tauri::Manager;
 

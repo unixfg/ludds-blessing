@@ -293,6 +293,12 @@ describe("Ludd’s Blessing app shell", () => {
     expect(screen.getByText("Game activity check")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create backup & restore" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save a copy" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/I reviewed the warnings/i));
+    expect(screen.getByRole("button", { name: "Create backup & restore" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel restore" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review restore" }));
+    expect(await screen.findByLabelText(/I reviewed the warnings/i)).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Create backup & restore" })).toBeDisabled();
   });
 
   it("keeps unknown mod skills read-only", async () => {
@@ -829,11 +835,11 @@ describe("Ludd’s Blessing app shell", () => {
     expect(screen.getByLabelText("Railgun quantity")).toHaveValue(2);
   });
 
-  it("requires warning acknowledgement again after a row reset rebuilds review", async () => {
+  it("remembers an unchanged warning after a row reset rebuilds review", async () => {
     const prepareReview = api.prepareReview.bind(api);
     vi.spyOn(api, "prepareReview").mockImplementation(async (sessionId, revision, edits) => ({
       ...await prepareReview(sessionId, revision, edits),
-      warnings: ["Review the staged cargo warning."],
+      warnings: [{ id: "cargo-warning", message: "Review the staged cargo warning.", acknowledgementRequired: true }],
     }));
 
     render(<App />);
@@ -846,6 +852,8 @@ describe("Ludd’s Blessing app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Review 2 changes/i }));
     const firstAcknowledgement = await screen.findByLabelText(/I reviewed the warnings/i);
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save a copy" })).toBeDisabled();
     fireEvent.click(firstAcknowledgement);
     expect(firstAcknowledgement).toBeChecked();
 
@@ -854,7 +862,103 @@ describe("Ludd’s Blessing app shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
 
     const rebuiltAcknowledgement = await screen.findByLabelText(/I reviewed the warnings/i);
-    expect(rebuiltAcknowledgement).not.toBeChecked();
+    expect(rebuiltAcknowledgement).toBeChecked();
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save a copy" })).toBeEnabled();
+    fireEvent.click(rebuiltAcknowledgement);
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeDisabled();
+  });
+
+  it("requires acknowledgement for new conditions even when warning text is unchanged", async () => {
+    const prepareReview = api.prepareReview.bind(api);
+    let warningId = "skills-original";
+    vi.spyOn(api, "prepareReview").mockImplementation(async (sessionId, revision, edits) => ({
+      ...await prepareReview(sessionId, revision, edits),
+      warnings: [{ id: warningId, message: "Unusual skill total.", acknowledgementRequired: true }],
+    }));
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    fireEvent.change(await screen.findByLabelText("Current balance"), { target: { value: "90000000" } });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+    fireEvent.click(await screen.findByLabelText(/I reviewed the warnings/i));
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeEnabled();
+
+    warningId = "skills-changed";
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild review" }));
+    await waitFor(() => expect(screen.getByLabelText(/I reviewed the warnings/i)).not.toBeChecked());
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save a copy" })).toBeDisabled();
+  });
+
+  it("keeps persisted warnings visible without blocking apply or save copy", async () => {
+    const prepareReview = api.prepareReview.bind(api);
+    vi.spyOn(api, "prepareReview").mockImplementation(async (sessionId, revision, edits) => ({
+      ...await prepareReview(sessionId, revision, edits),
+      warnings: [{ id: "reviewed-skills", message: "Unusual skill total.", acknowledgementRequired: false }],
+    }));
+    const applyReview = vi.spyOn(api, "applyReview");
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    fireEvent.change(await screen.findByLabelText("Current balance"), { target: { value: "90000000" } });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+    expect(await screen.findByText("Previously reviewed warning")).toBeInTheDocument();
+    expect(screen.getByText("Unusual skill total.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/I reviewed the warnings/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save a copy" }));
+    await waitFor(() => expect(applyReview).toHaveBeenCalledWith(expect.any(String), { type: "save_copy", targetRoot: "Demo save root" }, true));
+    expect(await screen.findByRole("heading", { name: "Campaign records" })).toBeInTheDocument();
+  });
+
+  it("keeps acknowledgement scoped to the save when reopening the editor", async () => {
+    const [firstSave] = demoSaves();
+    vi.spyOn(api, "scanSaves").mockResolvedValue([firstSave, { ...firstSave, id: "demo-second" }]);
+    const prepareReview = api.prepareReview.bind(api);
+    vi.spyOn(api, "prepareReview").mockImplementation(async (sessionId, revision, edits) => ({
+      ...await prepareReview(sessionId, revision, edits),
+      warnings: [{ id: "same-warning", message: "Unusual skill total.", acknowledgementRequired: true }],
+    }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+    const stageWarning = async (index: number) => {
+      fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[index]);
+      fireEvent.change(await screen.findByLabelText("Current balance"), { target: { value: "90000000" } });
+      fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+      return screen.findByLabelText(/I reviewed the warnings/i);
+    };
+    fireEvent.click(await stageWarning(0));
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(await stageWarning(0)).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(await stageWarning(1)).not.toBeChecked();
+  });
+
+  it("blocks new warnings alongside remembered ones and always blocks validation errors", async () => {
+    const prepareReview = api.prepareReview.bind(api);
+    let errors: string[] = [];
+    vi.spyOn(api, "prepareReview").mockImplementation(async (sessionId, revision, edits) => ({
+      ...await prepareReview(sessionId, revision, edits),
+      warnings: [
+        { id: "old-warning", message: "Reviewed player skills.", acknowledgementRequired: false },
+        { id: "new-warning", message: "New officer warning.", acknowledgementRequired: true },
+      ],
+      errors,
+    }));
+    render(<App />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open editor" }))[0]);
+    fireEvent.change(await screen.findByLabelText("Current balance"), { target: { value: "90000000" } });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+    await screen.findByText("New officer warning.");
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/I reviewed the warnings/i));
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeEnabled();
+
+    errors = ["Save validation failed."];
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild review" }));
+    await screen.findByText("Save validation failed.");
+    expect(screen.getByLabelText(/I reviewed the warnings/i)).toBeChecked();
+    expect(screen.getByRole("button", { name: "Create backup & apply" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save a copy" })).toBeDisabled();
   });
 
   it("offers an actionable review for interrupted transaction recovery", async () => {
@@ -874,6 +978,7 @@ describe("Ludd’s Blessing app shell", () => {
 
     expect(prepareRestore).toHaveBeenCalledWith("opaque-recovery-token", "opaque-recovery-token");
     expect(await screen.findByRole("heading", { name: "Review backup restore" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create backup & restore" })).toBeDisabled();
   });
 
   it("discards a consumed review after a failed apply while preserving the draft", async () => {

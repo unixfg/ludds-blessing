@@ -321,6 +321,7 @@ pub(crate) struct CargoStackState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ColonyState {
+    pub market_id: String,
     pub name: String,
     pub faction_id: String,
     pub location_context: Option<String>,
@@ -410,6 +411,7 @@ pub(crate) struct RelationState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct OfficerState {
+    pub persistent_id: Option<String>,
     pub person: PersonState,
     pub assigned: bool,
     pub pending_skill_picks: Vec<String>,
@@ -687,6 +689,10 @@ pub(crate) fn extract_campaign(
         officers.insert(
             officer_id,
             OfficerState {
+                persistent_id: xml
+                    .attribute(person_id, "id")
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned),
                 person,
                 assigned,
                 pending_skill_picks,
@@ -1137,7 +1143,8 @@ fn extract_colonies(
             )));
         }
         let colony_id = opaque_id("colony", format!("{save_id}:{market_id}").as_bytes());
-        let (colony_anchors, colony) = extract_colony(xml, market, save_id, &colony_id)?;
+        let (colony_anchors, colony) =
+            extract_colony(xml, market, save_id, &colony_id, &market_id)?;
         anchors.insert(colony_id.clone(), colony_anchors);
         colonies.insert(colony_id, colony);
     }
@@ -1149,6 +1156,7 @@ fn extract_colony(
     market: ElementId,
     save_id: &str,
     colony_id: &str,
+    market_id: &str,
 ) -> Result<(ColonyAnchors, ColonyState)> {
     let mut warnings = Vec::new();
     let name = bounded_child_text(xml, market, "name", 512, "colony name")?;
@@ -1184,6 +1192,7 @@ fn extract_colony(
             local_resources: local_resources_anchor,
         },
         ColonyState {
+            market_id: market_id.to_owned(),
             name,
             faction_id,
             location_context,

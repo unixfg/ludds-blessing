@@ -541,6 +541,7 @@ function OfficerDetail({ snapshot, officer, draft, upsert, reset }: { snapshot: 
 }
 
 function ReviewPage({ review, draftCount, busy, warningAccepted, setWarningAccepted, onPrepare, onApply, onSaveCopy, onDiscard, isRestore }: { review: Review | null; draftCount: number; busy: boolean; warningAccepted: boolean; setWarningAccepted: (value: boolean) => void; onPrepare: () => void; onApply: () => void; onSaveCopy: () => void; onDiscard: () => void; isRestore: boolean }) {
+  const requiresAcknowledgement = review?.warnings.some((warning) => warning.acknowledgementRequired) ?? false;
   const grouped = useMemo(() => {
     const result = new Map<string, Review["changes"]>();
     review?.changes.forEach((change) => result.set(change.section, [...(result.get(change.section) ?? []), change]));
@@ -555,7 +556,7 @@ function ReviewPage({ review, draftCount, busy, warningAccepted, setWarningAccep
       {!review && draftCount === 0 ? <EmptyState icon={BookOpenCheck} title="No staged changes">Edit a supported character, inventory, reputation, officer, storage, or Local Resources field to build a review.</EmptyState> : !review ? <div className="center-action"><button className="button" type="button" onClick={onPrepare} disabled={busy}><BookOpenCheck size={17} /> Prepare secure review</button></div> : (
         <>
           {review.errors.map((error) => <Notice tone="danger" title="Validation error" key={error}>{error}</Notice>)}
-          {review.warnings.map((warning) => <Notice tone="warning" title="Review warning" key={warning}>{warning}</Notice>)}
+          {review.warnings.map((warning) => <Notice tone={warning.acknowledgementRequired ? "warning" : "info"} title={warning.acknowledgementRequired ? "Review warning" : "Previously reviewed warning"} key={warning.id}>{warning.message}</Notice>)}
           {[...grouped.entries()].map(([section, changes]) => (
             <section className="panel diff-panel" key={section}>
               <div className="panel__heading"><h3>{section}</h3><span className="panel-count">{changes.length}</span></div>
@@ -564,12 +565,12 @@ function ReviewPage({ review, draftCount, busy, warningAccepted, setWarningAccep
               </div>
             </section>
           ))}
-          {review.warnings.length > 0 ? <label className="warning-ack"><input type="checkbox" checked={warningAccepted} onChange={(event) => setWarningAccepted(event.target.checked)} /><span>I reviewed the warnings and still want to apply these changes.</span></label> : null}
+          {requiresAcknowledgement ? <label className="warning-ack"><input type="checkbox" checked={warningAccepted} onChange={(event) => setWarningAccepted(event.target.checked)} /><span>I reviewed the warnings and still want to apply these changes.</span></label> : null}
           <div className="commit-bar">
             <div><strong>{review.changes.length} verified changes</strong><span>A separate app-owned backup is created first.</span></div>
             <button className="button button--ghost" type="button" onClick={onDiscard}><Trash2 size={16} /> {isRestore ? "Cancel restore" : "Discard draft"}</button>
-            {!isRestore ? <button className="button button--secondary" type="button" onClick={onSaveCopy} disabled={!review.canApply || review.errors.length > 0 || (review.warnings.length > 0 && !warningAccepted) || busy}><ClipboardCopy size={16} /> Save a copy</button> : null}
-            <button className="button" type="button" onClick={onApply} disabled={!review.canApply || review.errors.length > 0 || (review.warnings.length > 0 && !warningAccepted) || busy}><DatabaseBackup size={16} /> {isRestore ? "Create backup & restore" : "Create backup & apply"}</button>
+            {!isRestore ? <button className="button button--secondary" type="button" onClick={onSaveCopy} disabled={!review.canApply || review.errors.length > 0 || (requiresAcknowledgement && !warningAccepted) || busy}><ClipboardCopy size={16} /> Save a copy</button> : null}
+            <button className="button" type="button" onClick={onApply} disabled={!review.canApply || review.errors.length > 0 || (requiresAcknowledgement && !warningAccepted) || busy}><DatabaseBackup size={16} /> {isRestore ? "Create backup & restore" : "Create backup & apply"}</button>
           </div>
         </>
       )}
@@ -809,7 +810,7 @@ function SettingsPage({ diagnostics, rootPath, setRootPath, refreshToken, onRegi
         <div className="panel__heading"><div><p className="eyebrow">Privacy-safe report</p><h3>Diagnostics</h3></div><button className="button button--secondary" type="button" onClick={() => void onDiagnostics()}><FileSearch size={16} /> Generate</button></div>
         {diagnostics ? <div className="diagnostics"><div><strong>Version {diagnostics.appVersion}</strong><span>{diagnostics.os}</span></div><ul>{diagnostics.entries.map((entry) => <li key={entry}>{entry}</li>)}</ul><button className="button button--ghost" type="button" onClick={copyDiagnostics}><ClipboardCopy size={15} /> Copy report</button></div> : <p className="muted">Reports exclude save contents and redact user-specific path components by default.</p>}
       </section>
-      <section className="panel about-panel"><Orbit size={30} aria-hidden="true" /><div><h3>Ludd’s Blessing 0.2.2</h3><p>An independent, local-first community tool. Starsector is created by Fractal Softworks. No Starsector assets are bundled.</p></div></section>
+      <section className="panel about-panel"><Orbit size={30} aria-hidden="true" /><div><h3>Ludd’s Blessing 0.2.3</h3><p>An independent, local-first community tool. Starsector is created by Fractal Softworks. No Starsector assets are bundled.</p></div></section>
     </div>
   );
 }
@@ -829,9 +830,31 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiFailure | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [warningAccepted, setWarningAccepted] = useState(false);
+  const [restoreWarningAccepted, setRestoreWarningAccepted] = useState(false);
+  const [reviewedWarningIds, setReviewedWarningIds] = useState<Map<string, Set<string>>>(() => new Map());
   const [reviewMode, setReviewMode] = useState<"edit" | "restore" | "recovery">("edit");
   const [recovery, setRecovery] = useState<RecoveryState | null>(null);
+  const warningAccepted = reviewMode === "edit"
+    ? Boolean(review && snapshot && review.warnings.every((warning) =>
+      !warning.acknowledgementRequired || reviewedWarningIds.get(snapshot.saveId)?.has(warning.id)))
+    : restoreWarningAccepted;
+  const setWarningAccepted = (accepted: boolean) => {
+    if (reviewMode !== "edit") {
+      setRestoreWarningAccepted(accepted);
+      return;
+    }
+    if (!review || !snapshot) return;
+    setReviewedWarningIds((current) => {
+      const updated = new Map(current);
+      const ids = new Set(updated.get(snapshot.saveId));
+      review.warnings.forEach((warning) => {
+        if (accepted) ids.add(warning.id);
+        else ids.delete(warning.id);
+      });
+      updated.set(snapshot.saveId, ids);
+      return updated;
+    });
+  };
   const activeSessionId = useRef<string | null>(null);
   const activeReviewId = useRef<string | null>(null);
   const mainContent = useRef<HTMLElement>(null);
@@ -958,7 +981,7 @@ export default function App() {
     setDraft([]);
     setReview(null);
     setReviewMode("edit");
-    setWarningAccepted(false);
+    setRestoreWarningAccepted(false);
     setBackups([]);
     setPage("saves");
     void refreshSaves();
@@ -992,7 +1015,7 @@ export default function App() {
       setDraft([]);
       setReview(null);
       setReviewMode("edit");
-      setWarningAccepted(false);
+      setRestoreWarningAccepted(false);
       setSettingsRefreshToken((value) => value + 1);
       if (!snapshot || refreshedSaves.some((save) => save.id === snapshot.saveId)) {
         setToast(snapshot ? "Library and open save refreshed." : "Save library refreshed.");
@@ -1007,19 +1030,19 @@ export default function App() {
   const upsertEdit = (edit: Edit) => {
     const key = editKey(edit);
     setDraft((current) => [...current.filter((candidate) => editKey(candidate) !== key), edit]);
-    setReview(null); setReviewMode("edit"); setWarningAccepted(false);
+    setReview(null); setReviewMode("edit"); setRestoreWarningAccepted(false);
   };
   const resetEdit = (key: string) => {
     setDraft((current) => current.filter((edit) => editKey(edit) !== key));
     setReview(null);
-    setWarningAccepted(false);
+    setRestoreWarningAccepted(false);
   };
   const resetEditPrefix = (prefix: string) => {
     setDraft((current) => current.filter((edit) => !editKey(edit).startsWith(prefix)));
     setReview(null);
-    setWarningAccepted(false);
+    setRestoreWarningAccepted(false);
   };
-  const discardDraft = () => { setDraft([]); setReview(null); setWarningAccepted(false); setToast("Draft discarded. No files were changed."); };
+  const discardDraft = () => { setDraft([]); setReview(null); setRestoreWarningAccepted(false); setToast("Draft discarded. No files were changed."); };
 
   const unlockProtected = async () => {
     if (!snapshot) return;
@@ -1044,7 +1067,7 @@ export default function App() {
         ? await api.applyRestore(review.reviewId, warningAccepted)
         : await api.applyReview(review.reviewId, mode, warningAccepted);
       setToast(result.message || `Save committed to ${result.targetPath}`);
-      setDraft([]); setReview(null); setWarningAccepted(false);
+      setDraft([]); setReview(null); setRestoreWarningAccepted(false);
       if (completedMode === "recovery") {
         setRecovery(await api.startupRecoveryState());
         setSnapshot(null);
@@ -1067,7 +1090,7 @@ export default function App() {
       // failed attempts. Keep semantic edit drafts, but never offer a consumed
       // review for retry.
       setReview(null);
-      setWarningAccepted(false);
+      setRestoreWarningAccepted(false);
 
       if (failure.code === "RECOVERY_REQUIRED") {
         try { setRecovery(await api.startupRecoveryState()); } catch { /* Preserve the transaction error. */ }
@@ -1107,7 +1130,7 @@ export default function App() {
   const restoreBackup = async (backup: BackupSummary) => {
     if (!snapshot) return;
     setBusy(true);
-    try { setReview(await api.prepareRestore(snapshot.sessionId, backup.id)); setReviewMode("restore"); setWarningAccepted(false); setPage("review"); } catch (caught) { setError(displayError(caught)); } finally { setBusy(false); }
+    try { setReview(await api.prepareRestore(snapshot.sessionId, backup.id)); setReviewMode("restore"); setRestoreWarningAccepted(false); setPage("review"); } catch (caught) { setError(displayError(caught)); } finally { setBusy(false); }
   };
 
   const recoverInterruptedWrite = async (item: RecoveryItem) => {
@@ -1115,7 +1138,7 @@ export default function App() {
     try {
       setReview(await api.prepareRestore(item.transactionId, item.transactionId));
       setReviewMode("recovery");
-      setWarningAccepted(false);
+      setRestoreWarningAccepted(false);
       setPage("review");
     } catch (caught) {
       setError(displayError(caught));

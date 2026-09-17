@@ -774,7 +774,7 @@ fn quarantine_config(path: &Path, label: &str) -> Result<(), std::io::Error> {
     replace_private_file_io(path, &quarantine)
 }
 
-fn atomic_write_private_file(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+pub(crate) fn atomic_write_private_file(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

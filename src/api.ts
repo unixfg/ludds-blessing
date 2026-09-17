@@ -220,6 +220,7 @@ export const api = {
       return {
         ...demoReview("demo-revision", []),
         reviewId: `restore-${backupId}`,
+        warnings: [{ id: `restore-${backupId}`, message: "Restoring creates a pinned safety backup of the current save first.", acknowledgementRequired: true }],
         canApply: true,
         changes: [{ key: "restore", section: "Save", label: "Restore backup", before: "Current pair", after: backupId, derived: null }],
       };

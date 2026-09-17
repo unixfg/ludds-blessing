@@ -283,7 +283,7 @@ export const demoReview = (revision: string, edits: Edit[]): Review => ({
   revision,
   changes: edits.map((edit) => editLabel(edit, demoSnapshot("demo-mira"))),
   warnings: edits.some((edit) => edit.type.includes("skill"))
-    ? ["Skill changes do not automatically spend or refund point pools."]
+    ? [{ id: "demo-skill-point-pools", message: "Skill changes do not automatically spend or refund point pools.", acknowledgementRequired: true }]
     : [],
   errors: [],
   canApply: edits.length > 0,
@@ -311,7 +311,7 @@ export const demoBackups = (): BackupSummary[] => [
 ];
 
 export const demoDiagnostics = (): Diagnostics => ({
-    appVersion: "0.2.2-demo",
+    appVersion: "0.2.3-demo",
   os: "Browser preview",
   entries: [
     "Tauri runtime not detected; no filesystem commands are available.",

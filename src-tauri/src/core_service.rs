@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{CommandError, ErrorCode};
 use crate::models::*;
+use crate::warning_acknowledgements::WarningAcknowledgements;
 
 const MAX_DIAGNOSTIC_ENTRIES: usize = 100;
 const MAX_PORTRAIT_ENTRIES: usize = 2_048;
@@ -43,6 +44,7 @@ pub struct CoreService {
 
 #[derive(Default)]
 struct CoreState {
+    reviewed_warnings: WarningAcknowledgements,
     sessions: HashMap<SessionId, Arc<SessionRecord>>,
     session_order: VecDeque<SessionId>,
     reviews: HashMap<ReviewId, ReviewRecord>,
@@ -182,10 +184,17 @@ impl CoreService {
         let backup_root = app_data_dir.join("backups");
         std::fs::create_dir_all(&backup_root)?;
         std::fs::create_dir_all(app_data_dir.join("transactions"))?;
+        let mut state = CoreState::default();
+        match WarningAcknowledgements::load(&app_data_dir) {
+            Ok(reviewed_warnings) => state.reviewed_warnings = reviewed_warnings,
+            Err(_) => state.diagnostics.push_back(
+                "remembered warning acknowledgements were unreadable; warnings require review again".into(),
+            ),
+        }
         Ok(Self {
             app_data_dir,
             backup_store: save_core::BackupStore::new(backup_root),
-            state: Mutex::new(CoreState::default()),
+            state: Mutex::new(state),
         })
     }
 
@@ -447,12 +456,22 @@ impl CoreService {
             &trusted_stack_ids,
             &trusted_additions,
         )?;
-        let acknowledgement_required = prepared
-            .summary()
+        let mut review = review_from_core(prepared.summary(), &session.snapshot);
+        {
+            let state = self.lock_state()?;
+            for warning in &mut review.warnings {
+                if state
+                    .reviewed_warnings
+                    .contains(&prepared.summary().save_id, &warning.id)
+                {
+                    warning.acknowledgement_required = false;
+                }
+            }
+        }
+        let acknowledgement_required = review
             .warnings
             .iter()
             .any(|warning| warning.acknowledgement_required);
-        let review = review_from_core(prepared.summary(), &session.snapshot);
         self.insert_review(
             review.review_id.clone(),
             ReviewRecord::Edit {
@@ -494,6 +513,14 @@ impl CoreService {
         if let Some(expected) = catalog_fingerprint.as_deref() {
             ensure_data_catalog_matches(&session, expected)?;
         }
+        let source_save_id = prepared.summary().save_id.clone();
+        let warning_fingerprints: Vec<_> = prepared
+            .summary()
+            .warnings
+            .iter()
+            .filter(|warning| warning.acknowledgement_required)
+            .map(|warning| warning.fingerprint.clone())
+            .collect();
         let (outcome, message, invalidates_session) = match mode {
             ApplyMode::ReplaceOriginal => (
                 self.backup_store.apply_replace(*prepared, false)?,
@@ -515,7 +542,29 @@ impl CoreService {
             self.remove_session(&session_id)?;
         }
         self.record_diagnostic("a single-use edit review was applied");
-        apply_result_from_core(outcome, message)
+        let result = apply_result_from_core(outcome, message)?;
+        // Remember only warnings belonging to the successfully applied review.
+        // A copy inherits its reviewed conditions without authorizing other saves.
+        if !warning_fingerprints.is_empty() {
+            let persisted = self.lock_state().and_then(|mut state| {
+                state
+                    .reviewed_warnings
+                    .remember(&source_save_id, &warning_fingerprints);
+                state
+                    .reviewed_warnings
+                    .remember(&result.save_id.0, &warning_fingerprints);
+                state
+                    .reviewed_warnings
+                    .persist(&self.app_data_dir)
+                    .map_err(|_| {
+                        CommandError::internal("Could not persist warning acknowledgements")
+                    })
+            });
+            if persisted.is_err() {
+                self.record_diagnostic("the save succeeded, but warning acknowledgements could not be remembered across restarts");
+            }
+        }
+        Ok(result)
     }
 
     pub fn list_backups(&self, save_id: &SaveId) -> Result<Vec<BackupSummary>, CommandError> {
@@ -570,10 +619,14 @@ impl CoreService {
                 after: opaque_revision(&backup.revision),
                 derived: None,
             }],
-            warnings: vec![if is_recovery {
-                "This restore resolves an interrupted transaction and first preserves the current live pair when it is readable.".into()
-            } else {
-                "Restoring creates a pinned safety backup of the current save first.".into()
+            warnings: vec![ReviewWarning {
+                id: review_id.0.clone(),
+                message: if is_recovery {
+                    "This restore resolves an interrupted transaction and first preserves the current live pair when it is readable.".into()
+                } else {
+                    "Restoring creates a pinned safety backup of the current save first.".into()
+                },
+                acknowledgement_required: true,
             }],
             errors: Vec::new(),
             can_apply: true,
@@ -962,10 +1015,11 @@ impl CoreService {
                 after: "Last verified external backup".into(),
                 derived: None,
             }],
-            warnings: vec![
-                "Recovery replaces the interrupted live pair after preserving its current raw bytes as an emergency backup."
-                    .into(),
-            ],
+            warnings: vec![ReviewWarning {
+                id: review_id.0.clone(),
+                message: "Recovery replaces the interrupted live pair after preserving its current raw bytes as an emergency backup.".into(),
+                acknowledgement_required: true,
+            }],
             errors: Vec::new(),
             can_apply: true,
         };
@@ -1924,7 +1978,11 @@ fn review_from_core(summary: &save_core::ReviewSummary, snapshot: &SaveSnapshot)
         warnings: summary
             .warnings
             .iter()
-            .map(|warning| warning.message.clone())
+            .map(|warning| ReviewWarning {
+                id: warning.fingerprint.clone(),
+                message: warning.message.clone(),
+                acknowledgement_required: warning.acknowledgement_required,
+            })
             .collect(),
         errors: Vec::new(),
         can_apply: !summary.changes.is_empty(),
@@ -3736,6 +3794,166 @@ mod tests {
   "officerMaxEliteSkills": 1
 }}"#
         )
+    }
+
+    fn add_lifecycle_skill_warning(save_dir: &Path) {
+        fs::write(
+            save_dir.join("campaign.xml"),
+            lifecycle_campaign_fixture()
+                .replace("<s>{}</s>", r#"<s>{"alpha":1,"beta":1}</s>"#)
+                .replace("</m><cargo", r#"<FMmbr z="14"><c z="50" id="officer-person" pid="aggressive" spr="graphics/portraits/officer.png"><n z="51" f="Juno" l="Reed" g="FEMALE"></n><stats z="52" x2="0" xp="0" bx="0" db="0" l="1" pt="0" sp="0"><s>{"alpha":1,"beta":1}</s></stats></c></FMmbr></m><cargo"#)
+                .replace(r#"<o z="40"></o>"#, r#"<o z="40"><OfficerData z="41"><person ref="50"></person><skillPicks z="42"></skillPicks><madePicks>true</madePicks></OfficerData></o>"#),
+        )
+        .unwrap();
+    }
+
+    fn prepare_lifecycle_credit_review(
+        service: &CoreService,
+        save_dir: &Path,
+        credits: &str,
+    ) -> Review {
+        let snapshot = open_lifecycle_session(service, save_dir);
+        service
+            .prepare_review(
+                &snapshot.session_id,
+                vec![Edit::SetCredits {
+                    value: credits.into(),
+                }],
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn reviewed_warning_survives_restart_but_changed_conditions_require_acknowledgement() {
+        let (temporary, service) = lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        add_lifecycle_skill_warning(&save_dir);
+        let first = prepare_lifecycle_credit_review(&service, &save_dir, "2000");
+        assert_eq!(first.warnings.len(), 2);
+        assert!(first.warnings[0].acknowledgement_required);
+        assert_eq!(
+            service
+                .apply_review(&first.review_id, ApplyMode::ReplaceOriginal, false)
+                .unwrap_err()
+                .code,
+            ErrorCode::ValidationFailed
+        );
+        service
+            .apply_review(&first.review_id, ApplyMode::ReplaceOriginal, true)
+            .unwrap();
+        drop(service);
+
+        let service = CoreService::new(temporary.path().join("app-data")).unwrap();
+        let second = prepare_lifecycle_credit_review(&service, &save_dir, "3000");
+        assert_eq!(second.warnings[0].id, first.warnings[0].id);
+        assert!(second
+            .warnings
+            .iter()
+            .all(|warning| !warning.acknowledgement_required));
+        service
+            .apply_review(&second.review_id, ApplyMode::ReplaceOriginal, false)
+            .unwrap();
+
+        let campaign_path = save_dir.join("campaign.xml");
+        let campaign = fs::read_to_string(&campaign_path).unwrap();
+        fs::write(
+            &campaign_path,
+            campaign.replacen(r#""beta":1"#, r#""beta":1,"gamma":1"#, 1),
+        )
+        .unwrap();
+        let changed = prepare_lifecycle_credit_review(&service, &save_dir, "4000");
+        assert_eq!(changed.warnings[0].message, first.warnings[0].message);
+        assert_ne!(changed.warnings[0].id, first.warnings[0].id);
+        assert!(changed.warnings[0].acknowledgement_required);
+        assert!(!changed.warnings[1].acknowledgement_required);
+        assert_eq!(
+            service
+                .apply_review(&changed.review_id, ApplyMode::ReplaceOriginal, false)
+                .unwrap_err()
+                .code,
+            ErrorCode::ValidationFailed
+        );
+    }
+
+    #[test]
+    fn save_copy_inherits_reviewed_warnings_without_authorizing_other_saves() {
+        let (temporary, service) = lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        add_lifecycle_skill_warning(&save_dir);
+        let review = prepare_lifecycle_credit_review(&service, &save_dir, "2000");
+        let result = service
+            .apply_review(
+                &review.review_id,
+                ApplyMode::SaveCopy {
+                    target_root: temporary.path().to_string_lossy().into_owned(),
+                },
+                true,
+            )
+            .unwrap();
+        drop(service);
+
+        let service = CoreService::new(temporary.path().join("app-data")).unwrap();
+        for path in [save_dir, PathBuf::from(result.target_path)] {
+            let review = prepare_lifecycle_credit_review(&service, &path, "3000");
+            assert!(review
+                .warnings
+                .iter()
+                .all(|warning| !warning.acknowledgement_required));
+        }
+        let other_save = temporary.path().join("save_Other_1");
+        fs::create_dir(&other_save).unwrap();
+        add_lifecycle_skill_warning(&other_save);
+        fs::write(
+            other_save.join("descriptor.xml"),
+            lifecycle_descriptor_fixture(),
+        )
+        .unwrap();
+        let other = prepare_lifecycle_credit_review(&service, &other_save, "3000");
+        assert!(other.warnings[0].acknowledgement_required);
+    }
+
+    #[test]
+    fn failed_apply_does_not_persist_warning_acknowledgements() {
+        let (temporary, service) = lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        add_lifecycle_skill_warning(&save_dir);
+        let review = prepare_lifecycle_credit_review(&service, &save_dir, "2000");
+        assert!(service
+            .apply_review(
+                &review.review_id,
+                ApplyMode::SaveCopy {
+                    target_root: temporary
+                        .path()
+                        .join("missing")
+                        .to_string_lossy()
+                        .into_owned(),
+                },
+                true
+            )
+            .is_err());
+        drop(service);
+        let service = CoreService::new(temporary.path().join("app-data")).unwrap();
+        let review = prepare_lifecycle_credit_review(&service, &save_dir, "2000");
+        assert!(review.warnings[0].acknowledgement_required);
+    }
+
+    #[test]
+    fn unreadable_warning_history_requires_review_again_without_blocking_startup() {
+        let (temporary, service) = lifecycle_service();
+        drop(service);
+        let save_dir = temporary.path().join("save_Ada_1");
+        add_lifecycle_skill_warning(&save_dir);
+        let app_data = temporary.path().join("app-data");
+        fs::write(app_data.join("reviewed-warnings-v1.json"), b"{broken").unwrap();
+        let service = CoreService::new(app_data).unwrap();
+        let review = prepare_lifecycle_credit_review(&service, &save_dir, "2000");
+        assert!(review.warnings[0].acknowledgement_required);
+        service
+            .apply_review(&review.review_id, ApplyMode::ReplaceOriginal, true)
+            .unwrap();
+        let service = CoreService::new(temporary.path().join("app-data")).unwrap();
+        let review = prepare_lifecycle_credit_review(&service, &save_dir, "3000");
+        assert!(!review.warnings[0].acknowledgement_required);
     }
 
     fn progression_installation(root: &Path, player_max_level: u32) -> PathBuf {

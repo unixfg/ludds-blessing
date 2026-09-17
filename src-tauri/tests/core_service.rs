@@ -10,3 +10,7 @@ mod error;
 mod game_settings;
 #[path = "../src/models.rs"]
 mod models;
+#[path = "../src/service.rs"]
+mod service;
+#[path = "../src/warning_acknowledgements.rs"]
+mod warning_acknowledgements;

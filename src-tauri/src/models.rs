@@ -448,9 +448,18 @@ pub struct Review {
     pub review_id: ReviewId,
     pub revision: String,
     pub changes: Vec<ReviewChange>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<ReviewWarning>,
     pub errors: Vec<String>,
     pub can_apply: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/bindings/"))]
+pub struct ReviewWarning {
+    pub id: String,
+    pub message: String,
+    pub acknowledgement_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

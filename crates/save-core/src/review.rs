@@ -2092,7 +2092,18 @@ fn mark_derived_changes(
     }
 }
 
-fn review_warnings(old: &SemanticState, state: &SemanticState) -> Vec<Warning> {
+fn review_warning(code: &str, message: String, context: String) -> ReviewWarning {
+    ReviewWarning {
+        // Version the identity when a warning's meaning changes. Rendered text
+        // can contain session selectors or names that change without new risk.
+        fingerprint: fingerprint(format!("v1|{code}|{context}").as_bytes()).sha256,
+        code: code.to_owned(),
+        message,
+        acknowledgement_required: true,
+    }
+}
+
+fn review_warnings(old: &SemanticState, state: &SemanticState) -> Vec<ReviewWarning> {
     let mut warnings = Vec::new();
     if !cargo_values_equal(&old.inventory, &state.inventory)
         && state
@@ -2100,11 +2111,15 @@ fn review_warnings(old: &SemanticState, state: &SemanticState) -> Vec<Warning> {
             .max_space
             .is_some_and(|capacity| state.inventory.used_space > capacity)
     {
-        warnings.push(Warning {
-            code: "PLAYER_CARGO_OVER_CAPACITY".to_owned(),
-            message: "The staged inventory exceeds the player fleet cargo capacity".to_owned(),
-            acknowledgement_required: true,
-        });
+        warnings.push(review_warning(
+            "PLAYER_CARGO_OVER_CAPACITY",
+            "The staged inventory exceeds the player fleet cargo capacity".to_owned(),
+            format!(
+                "{}|{:?}",
+                state.inventory.used_space.to_bits(),
+                state.inventory.max_space.map(f32::to_bits)
+            ),
+        ));
     }
     for (colony_id, colony) in &state.colonies {
         let Some(storage) = &colony.storage else {
@@ -2122,14 +2137,19 @@ fn review_warnings(old: &SemanticState, state: &SemanticState) -> Vec<Warning> {
                 .max_space
                 .is_some_and(|capacity| storage.used_space > capacity)
         {
-            warnings.push(Warning {
-                code: "COLONY_STORAGE_OVER_CAPACITY".to_owned(),
-                message: format!(
+            warnings.push(review_warning(
+                "COLONY_STORAGE_OVER_CAPACITY",
+                format!(
                     "The staged storage for {} exceeds its serialized capacity",
                     colony.name
                 ),
-                acknowledgement_required: true,
-            });
+                format!(
+                    "{}|{}|{:?}",
+                    fingerprint(colony.market_id.as_bytes()).sha256,
+                    storage.used_space.to_bits(),
+                    storage.max_space.map(f32::to_bits)
+                ),
+            ));
         }
     }
     let learned = state
@@ -2145,11 +2165,20 @@ fn review_warnings(old: &SemanticState, state: &SemanticState) -> Vec<Warning> {
             .level
             .saturating_add(state.player.stats.skill_points)
     {
-        warnings.push(Warning {
-            code: "PLAYER_SKILL_TOTAL_INCONSISTENT".to_owned(),
-            message: "Learned player skills exceed level plus unspent points".to_owned(),
-            acknowledgement_required: true,
-        });
+        warnings.push(review_warning(
+            "PLAYER_SKILL_TOTAL_INCONSISTENT",
+            "Learned player skills exceed level plus unspent points".to_owned(),
+            format!(
+                "{learned}|{}|{}",
+                state.player.stats.level, state.player.stats.skill_points
+            ),
+        ));
+    }
+    let mut officer_id_counts = HashMap::new();
+    for officer in state.officers.values() {
+        if let Some(id) = officer.persistent_id.as_deref() {
+            *officer_id_counts.entry(id).or_insert(0) += 1;
+        }
     }
     for (id, officer) in &state.officers {
         let learned = officer
@@ -2165,11 +2194,22 @@ fn review_warnings(old: &SemanticState, state: &SemanticState) -> Vec<Warning> {
                 .level
                 .saturating_add(officer.person.stats.skill_points)
         {
-            warnings.push(Warning {
-                code: "OFFICER_SKILL_TOTAL_INCONSISTENT".to_owned(),
-                message: format!("Officer {id} has an unusual level/skill total"),
-                acknowledgement_required: true,
-            });
+            // A unique game identity survives roster reordering and Save a Copy.
+            // Anonymous or duplicate identities retain the conservative selector.
+            let identity = officer
+                .persistent_id
+                .as_deref()
+                .filter(|id| officer_id_counts.get(id) == Some(&1))
+                .map(|id| fingerprint(id.as_bytes()).sha256)
+                .unwrap_or_else(|| id.clone());
+            warnings.push(review_warning(
+                "OFFICER_SKILL_TOTAL_INCONSISTENT",
+                format!("Officer {id} has an unusual level/skill total"),
+                format!(
+                    "{identity}|{learned}|{}|{}",
+                    officer.person.stats.level, officer.person.stats.skill_points
+                ),
+            ));
         }
     }
     warnings
@@ -2952,6 +2992,126 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.code == "COLONY_STORAGE_OVER_CAPACITY"));
+    }
+
+    #[test]
+    fn warning_fingerprints_follow_only_the_affected_entity_and_conditions() {
+        let opened = open_campaign_fixture(inventory_colony_fixture());
+        let original = &opened.state;
+        let mut desired = original.clone();
+        desired
+            .player
+            .skills
+            .insert("gamma".into(), SkillRank::Learned);
+        desired
+            .player
+            .skills
+            .insert("delta".into(), SkillRank::Learned);
+        desired
+            .officers
+            .values_mut()
+            .next()
+            .unwrap()
+            .person
+            .skills
+            .insert("gamma".into(), SkillRank::Learned);
+        desired.inventory.used_space = 22.0;
+        desired
+            .colonies
+            .values_mut()
+            .next()
+            .unwrap()
+            .storage
+            .as_mut()
+            .unwrap()
+            .used_space = 31.0;
+        let warnings = review_warnings(original, &desired);
+        assert_eq!(warnings.len(), 4);
+
+        // Credits and names do not change any of these warning conditions.
+        desired.credits += 1000.0;
+        desired.player.first_name = "Changed".into();
+        assert_eq!(review_warnings(original, &desired), warnings);
+
+        for (index, mut changed) in (0..4).map(|index| (index, desired.clone())) {
+            match index {
+                0 => changed.inventory.used_space = 23.0,
+                1 => {
+                    changed
+                        .colonies
+                        .values_mut()
+                        .next()
+                        .unwrap()
+                        .storage
+                        .as_mut()
+                        .unwrap()
+                        .max_space = Some(29.0)
+                }
+                2 => changed.player.stats.skill_points = 1,
+                3 => {
+                    changed
+                        .officers
+                        .values_mut()
+                        .next()
+                        .unwrap()
+                        .person
+                        .skills
+                        .insert("delta".into(), SkillRank::Learned);
+                }
+                _ => unreachable!(),
+            }
+            let updated = review_warnings(original, &changed);
+            assert_eq!(updated.len(), warnings.len());
+            for (position, (old, new)) in warnings.iter().zip(&updated).enumerate() {
+                assert_eq!(old.message, new.message);
+                assert_eq!(old.fingerprint == new.fingerprint, position != index);
+            }
+        }
+    }
+
+    #[test]
+    fn warning_identity_survives_copying_and_officer_reordering() {
+        let campaign = inventory_colony_fixture()
+            .replace(r#""alpha":0"#, r#""alpha":1"#)
+            .replace(r#"<s>{"alpha":1}</s>"#, r#"<s>{"alpha":1,"beta":1}</s>"#);
+        let first = open_campaign_fixture(campaign.clone());
+        let copy = open_campaign_fixture(campaign);
+        let warning_keys = |state: &SemanticState| {
+            let mut desired = state.clone();
+            desired.inventory.used_space = 22.0;
+            desired
+                .colonies
+                .values_mut()
+                .next()
+                .unwrap()
+                .storage
+                .as_mut()
+                .unwrap()
+                .used_space = 31.0;
+            review_warnings(state, &desired)
+                .into_iter()
+                .map(|warning| warning.fingerprint)
+                .collect::<Vec<_>>()
+        };
+        let expected = warning_keys(&first.state);
+        assert_eq!(expected.len(), 4);
+        assert_eq!(warning_keys(&copy.state), expected);
+
+        let mut reordered = first.state.clone();
+        let (_, officer) = reordered.officers.shift_remove_index(0).unwrap();
+        reordered
+            .officers
+            .insert("reordered-selector".into(), officer.clone());
+        assert_eq!(warning_keys(&reordered), expected);
+
+        // Duplicate game IDs cannot share an acknowledgement accidentally.
+        reordered
+            .officers
+            .insert("duplicate-selector".into(), officer);
+        let duplicate_keys = warning_keys(&reordered);
+        assert_eq!(duplicate_keys.len(), 5);
+        assert_ne!(duplicate_keys[3], duplicate_keys[4]);
+        assert_ne!(duplicate_keys[3], expected[3]);
     }
 
     #[test]

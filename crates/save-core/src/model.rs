@@ -405,5 +405,14 @@ pub struct ReviewSummary {
     pub save_id: String,
     pub source_revision: ContentRevision,
     pub changes: Vec<ReviewChange>,
-    pub warnings: Vec<Warning>,
+    pub warnings: Vec<ReviewWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewWarning {
+    /// Stable for the same warning, affected entity, and relevant values.
+    pub fingerprint: String,
+    pub code: String,
+    pub message: String,
+    pub acknowledgement_required: bool,
 }

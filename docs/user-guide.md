@@ -1,4 +1,4 @@
-# Ludd’s Blessing 0.2.2
+# Ludd’s Blessing 0.2.3
 
 This is an unsigned Windows 10/11 x64 release. Windows SmartScreen may show an “unrecognized app” warning because the executable is not code-signed. Verify the SHA-256 digest shown by GitHub for the executable before running it. The tagged source archives on the same release page contain the source, license, and build scripts.
 
@@ -56,6 +56,19 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
   Starsector instance is running because the editor cannot prove which
   virtualized folder that older process is actively using.
 
+## Reviewing warnings
+
+- Review warnings once for each save. Rebuilding a review or editing unrelated
+  values keeps your acknowledgment for unchanged warnings.
+- After a successful **Create backup & apply** or **Save a copy**, reviewed
+  warnings are remembered in the app's local data across restarts. A new copy
+  inherits those acknowledgments; other saves require their own review.
+- Previously reviewed warnings remain visible without requiring another
+  checkbox. A new warning, or a change to the values that caused it, requires
+  acknowledgment again even when the warning text stays the same.
+- Validation errors still block saving. Restore and interrupted-write recovery
+  require confirmation each time.
+
 ## Game Settings Profiles
 
 - Open **Settings** to load game rules from a verified local Starsector
@@ -106,8 +119,8 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 - Unknown or ambiguous mod items remain visible by ID but read-only. The app
   rechecks the local item catalog when a review is prepared and applied.
 - Review labels derived cargo-space changes separately. Exceeding saved cargo
-  capacity produces a warning that must be acknowledged; capacity itself is
-  never changed.
+  capacity produces a warning that must be acknowledged for each new combination
+  of used space and capacity; capacity itself is never changed.
 
 ## Officer skills
 
@@ -124,7 +137,7 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 ## Verify a download in PowerShell
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.2_windows-x64.exe
+Get-FileHash -Algorithm SHA256 -LiteralPath .\LuddsBlessing_0.2.3_windows-x64.exe
 ```
 
 Compare the displayed hash with the `sha256:` digest GitHub shows beside the executable on the release page. A mismatch means the file must not be run.
