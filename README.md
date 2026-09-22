@@ -1,13 +1,20 @@
 # Ludd’s Blessing
 
 Ludd’s Blessing is a local-first desktop editor for Starsector save games. The
-first supported write format is the uncompressed `0.98a-RC8` / save-format
-`0.6` pair. Other XML saves are opened read-only when possible.
+supported write format is the `0.98a-RC8` / save-format `0.6` pair, with either
+uncompressed or compressed campaign data (`compressSaveGameData: true`). Other
+save versions are opened read-only when possible.
 
 The application never loads Starsector or mod Java classes and never rewrites
 the campaign XML wholesale. Supported edits are converted into checked byte
 spans, previewed, backed up, reparsed, and committed as a guarded two-file
 transaction.
+
+Compressed saves use Starsector's `campaign.zip` alongside `descriptor.xml`.
+The editor reads the descriptor's compression flag, applies the same checked
+edits to the campaign XML, and preserves compression when applying or saving a
+copy. Backups and restores preserve the original save files, including their
+compression format; there is no need to change the game's compression setting.
 
 ## Development
 

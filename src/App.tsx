@@ -326,11 +326,10 @@ function SavesPage({ saves, busy, onRefresh, onChooseRoot, onOpen }: { saves: Sa
               <button
                 className="button button--card"
                 type="button"
-                disabled={save.compressed || save.compatibility === "unreadable"}
-                title={save.compressed ? "Compressed campaign data cannot be opened; descriptor metadata remains visible on this card." : undefined}
+                disabled={save.compatibility === "unreadable"}
                 onClick={() => onOpen(save.id)}
               >
-                {save.compressed ? "Descriptor metadata only" : save.compatibility === "unreadable" ? "Preview unavailable" : save.compatibility === "editable" ? "Open editor" : "Open preview"}
+                {save.compatibility === "unreadable" ? "Preview unavailable" : save.compatibility === "editable" ? "Open editor" : "Open preview"}
                 <ChevronRight size={17} aria-hidden="true" />
               </button>
               <span className="save-card__path" title={save.path}>{save.path}</span>
@@ -964,7 +963,7 @@ export default function App() {
         setToast("That save is no longer available. The library was refreshed.");
         return;
       }
-      if (refreshedSave.compressed || refreshedSave.compatibility === "unreadable") {
+      if (refreshedSave.compatibility === "unreadable") {
         setToast("That save changed and can no longer be opened. The library was refreshed.");
         return;
       }

@@ -71,6 +71,15 @@ impl SaveLocation {
             save_dir,
         }
     }
+
+    /// Selects the campaign file named by the save's descriptor. An inactive
+    /// sibling left by a game settings change is never used as a fallback.
+    pub fn with_compression(mut self, compressed: bool) -> Self {
+        self.campaign_path = self
+            .save_dir
+            .join(crate::campaign::campaign_file_name(compressed));
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
