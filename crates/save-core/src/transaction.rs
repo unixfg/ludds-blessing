@@ -1,10 +1,11 @@
+use crate::campaign::{campaign_file_name, decode_campaign, encode_campaign};
 use crate::descriptor::parse_descriptor;
 use crate::error::{CoreError, ErrorCode, Result};
 use crate::file_util::{ensure_regular_directory, fingerprint, opaque_id, read_regular_file};
 use crate::model::{ContentRevision, DecimalI64, SaveLocation};
 use crate::patch::apply_patches;
 use crate::review::PreparedReview;
-use crate::xml::{XmlDocument, XmlLimits};
+use crate::xml::XmlLimits;
 use crate::{SUPPORTED_GAME_VERSION, SUPPORTED_SAVE_FORMAT};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -116,14 +117,19 @@ impl BackupStore {
         let campaign = read_locked(&mut campaign_file, XmlLimits::default().max_bytes)?;
         let descriptor = read_locked(&mut descriptor_file, 4 * 1024 * 1024)?;
         // Full parse before accepting a backup as the unlock safety point.
-        XmlDocument::parse(campaign.clone(), XmlLimits::default())?;
-        parse_descriptor(
+        let parsed_descriptor = parse_descriptor(
             descriptor.clone(),
             XmlLimits {
                 max_bytes: 4 * 1024 * 1024,
                 max_elements: 100_000,
                 ..XmlLimits::default()
             },
+        )?;
+        validate_campaign_location(&source, parsed_descriptor.metadata.compressed)?;
+        decode_campaign(
+            campaign.clone(),
+            parsed_descriptor.metadata.compressed,
+            XmlLimits::default(),
         )?;
         let backup = self.create_backup(save_id, &campaign, &descriptor, pinned, reason)?;
         let final_campaign = read_locked(&mut campaign_file, XmlLimits::default().max_bytes)?;
@@ -257,11 +263,18 @@ impl BackupStore {
             review.descriptor_source.len() as u64 + 1,
         )?;
         review.validate_against(&campaign_live, &descriptor_live)?;
-        validate_supported_write_pair(
+        let compressed = validate_supported_write_pair(
             &campaign_live,
             &descriptor_live,
             review.protected_write_authorized,
         )?;
+        validate_campaign_location(&review.location, compressed)?;
+        let output_compressed = validate_supported_write_pair(
+            &review.campaign_output,
+            &review.descriptor_output,
+            review.protected_write_authorized,
+        )?;
+        validate_campaign_location(&review.location, output_compressed)?;
 
         let backup = self.create_backup(
             &review.summary.save_id,
@@ -420,17 +433,18 @@ impl BackupStore {
         let current_campaign = read_locked(&mut campaign_file, campaign_limit)?;
         let current_descriptor = read_locked(&mut descriptor_file, descriptor_limit)?;
         review.validate_against(&current_campaign, &current_descriptor)?;
-        validate_supported_write_pair(
+        let compressed = validate_supported_write_pair(
             &current_campaign,
             &current_descriptor,
             review.protected_write_authorized,
         )?;
+        validate_campaign_location(&review.location, compressed)?;
 
         let safe_name = sanitize_copy_name(display_name);
         let suffix = Uuid::new_v4().simple().to_string();
         let directory_name = format!("save_{safe_name}_{}", &suffix[..12]);
         let destination = destination_parent.join(&directory_name);
-        let location = SaveLocation::from_save_dir(&destination);
+        let location = SaveLocation::from_save_dir(&destination).with_compression(compressed);
         let staging = destination_parent.join(format!(".ludds-blessing-copy-{suffix}.tmp"));
         if destination.exists() || staging.exists() {
             return Err(CoreError::new(
@@ -438,14 +452,19 @@ impl BackupStore {
                 "generated save-copy path already exists",
             ));
         }
-        let staging_location = SaveLocation::from_save_dir(&staging);
+        let staging_location = SaveLocation::from_save_dir(&staging).with_compression(compressed);
 
-        let campaign_doc =
-            XmlDocument::parse(review.campaign_output.clone(), XmlLimits::default())?;
+        let (campaign_doc, encoding) = decode_campaign(
+            review.campaign_output.clone(),
+            compressed,
+            XmlLimits::default(),
+        )?;
         let save_dir_name = campaign_doc.unique_direct_child(campaign_doc.root(), "saveDirName")?;
         let campaign_patch =
             campaign_doc.text_patch(save_dir_name, &directory_name, "save-copy directory name")?;
-        let campaign_output = apply_patches(campaign_doc.bytes(), &[campaign_patch])?;
+        let campaign_xml = apply_patches(campaign_doc.bytes(), &[campaign_patch])?;
+        let campaign_output =
+            encode_campaign(&campaign_xml, &encoding, XmlLimits::default().max_bytes)?;
         let descriptor_doc = parse_descriptor(
             review.descriptor_output.clone(),
             XmlLimits {
@@ -457,11 +476,12 @@ impl BackupStore {
         let now = now_millis()?;
         let descriptor_patch = descriptor_doc.slot_creation_patch(now)?;
         let descriptor_output = apply_patches(descriptor_doc.xml.bytes(), &[descriptor_patch])?;
-        validate_supported_write_pair(
+        let output_compressed = validate_supported_write_pair(
             &campaign_output,
             &descriptor_output,
             review.protected_write_authorized,
         )?;
+        validate_campaign_location(&location, output_compressed)?;
         let expected_revision = ContentRevision {
             campaign: fingerprint(&campaign_output),
             descriptor: fingerprint(&descriptor_output),
@@ -554,7 +574,7 @@ impl BackupStore {
                 format!("save copy was published but final validation did not complete: {error}"),
             )),
             Err(error) => {
-                if cleanup_copy_staging(&staging).is_err() {
+                if cleanup_copy_staging(&staging, compressed).is_err() {
                     return Err(CoreError::new(
                         ErrorCode::RecoveryRequired,
                         format!("save-copy staging cleanup failed after: {error}"),
@@ -623,7 +643,8 @@ impl BackupStore {
         {
             return Err(CoreError::validation("backup hash validation failed"));
         }
-        validate_supported_write_pair(&restore_campaign, &restore_descriptor, allow_protected)?;
+        let restore_compressed =
+            validate_supported_write_pair(&restore_campaign, &restore_descriptor, allow_protected)?;
 
         let mut campaign_file = lock_for_write(&destination.campaign_path)?;
         let mut descriptor_file = match lock_for_write(&destination.descriptor_path) {
@@ -645,7 +666,14 @@ impl BackupStore {
                 "save changed after restore review",
             ));
         }
-        validate_supported_write_pair(&current_campaign, &current_descriptor, allow_protected)?;
+        let current_compressed =
+            validate_supported_write_pair(&current_campaign, &current_descriptor, allow_protected)?;
+        validate_campaign_location(&destination, current_compressed)?;
+        if current_compressed != restore_compressed {
+            return Err(CoreError::invalid_edit(
+                "the backup uses a different campaign compression format; restoring across formats is not supported",
+            ));
+        }
         let safety_backup = self.create_backup(
             save_id,
             &current_campaign,
@@ -781,7 +809,7 @@ impl BackupStore {
     }
 
     /// Resolves an interrupted transaction from its exact durable backup even
-    /// when the current XML pair is no longer parseable. Both current files
+    /// when the current save pair is no longer parseable. Both current files
     /// must still be regular files so they can be locked and preserved as a raw
     /// pinned emergency backup before recovery.
     pub fn recover_pending(&self, save_id: &str, backup_id: &str) -> Result<ApplyOutcome> {
@@ -835,10 +863,16 @@ impl BackupStore {
                 "pending recovery backup hash validation failed",
             ));
         }
-        validate_supported_write_pair(&restore_campaign, &restore_descriptor, true)?;
+        let compressed =
+            validate_supported_write_pair(&restore_campaign, &restore_descriptor, true)?;
 
         if journal.copy.is_some() {
-            return self.recover_pending_copy(&recovery_dir, &mut journal, manifest.summary);
+            return self.recover_pending_copy(
+                &recovery_dir,
+                &mut journal,
+                manifest.summary,
+                compressed,
+            );
         }
         let expected_save_id = opaque_id("save", journal.destination.to_string_lossy().as_bytes());
         if expected_save_id != save_id {
@@ -848,7 +882,11 @@ impl BackupStore {
             ));
         }
 
-        let destination = SaveLocation::from_save_dir(journal.destination.clone());
+        // Transactions preserve the source compression format. The validated
+        // backup descriptor remains authoritative if the live descriptor was
+        // damaged by an interrupted write.
+        let destination =
+            SaveLocation::from_save_dir(journal.destination.clone()).with_compression(compressed);
         ensure_save_inactive(&destination)?;
         ensure_regular_directory(&destination.save_dir)?;
         let mut campaign_file = lock_for_write(&destination.campaign_path)?;
@@ -861,6 +899,21 @@ impl BackupStore {
         };
         let current_campaign = read_locked(&mut campaign_file, XmlLimits::default().max_bytes)?;
         let current_descriptor = read_locked(&mut descriptor_file, 4 * 1024 * 1024)?;
+        if let Ok(descriptor) = parse_descriptor(
+            current_descriptor.clone(),
+            XmlLimits {
+                max_bytes: 4 * 1024 * 1024,
+                max_elements: 100_000,
+                ..XmlLimits::default()
+            },
+        ) {
+            if descriptor.metadata.compressed != compressed {
+                return Err(CoreError::new(
+                    ErrorCode::RecoveryRequired,
+                    "the live save compression format changed after the interrupted transaction; automatic recovery across formats is not supported",
+                ));
+            }
+        }
         let emergency_backup = self.create_backup(
             save_id,
             &current_campaign,
@@ -949,6 +1002,7 @@ impl BackupStore {
         recovery_dir: &Path,
         journal: &mut JournalRecord,
         backup: BackupSummary,
+        compressed: bool,
     ) -> Result<ApplyOutcome> {
         let copy = journal.copy.clone().ok_or_else(|| {
             CoreError::new(
@@ -989,11 +1043,13 @@ impl BackupStore {
             ));
         }
         ensure_regular_directory(&destination_parent)?;
-        let source = SaveLocation::from_save_dir(copy.source.clone());
+        let source = SaveLocation::from_save_dir(copy.source.clone()).with_compression(compressed);
         ensure_save_inactive(&source)?;
-        let destination = SaveLocation::from_save_dir(journal.destination.clone());
+        let destination =
+            SaveLocation::from_save_dir(journal.destination.clone()).with_compression(compressed);
         ensure_save_inactive(&destination)?;
-        let staging = SaveLocation::from_save_dir(copy.staging.clone());
+        let staging =
+            SaveLocation::from_save_dir(copy.staging.clone()).with_compression(compressed);
         let destination_exists = journal.destination.exists();
         let staging_exists = copy.staging.exists();
         if destination_exists && staging_exists {
@@ -1025,9 +1081,9 @@ impl BackupStore {
                     // A crash before both staged files were durably written is
                     // safely abortable because Save Copy never mutates its
                     // source. Only the exact, scoped staging directory and its
-                    // two allowed regular files may be removed.
+                    // two expected regular files may be removed.
                     let (campaign, descriptor) = read_locked_supported_pair(&source)?;
-                    cleanup_copy_staging(&copy.staging)?;
+                    cleanup_copy_staging(&copy.staging, compressed)?;
                     update_journal_phase(
                         recovery_dir,
                         journal,
@@ -1084,6 +1140,10 @@ impl BackupStore {
                 descriptor: fingerprint(descriptor),
             },
         };
+        // Schema 1 uses campaign.xml as the backup payload key for both
+        // encodings. Store the exact on-disk bytes (including a ZIP container)
+        // and derive their encoding from descriptor.xml when restoring. This
+        // keeps existing manifests and interrupted journals compatible.
         write_new_synced(&backup_dir.join("campaign.xml"), campaign)?;
         write_new_synced(&backup_dir.join("descriptor.xml"), descriptor)?;
         let manifest = BackupManifest {
@@ -1242,8 +1302,7 @@ fn validate_supported_write_pair(
     campaign: &[u8],
     descriptor: &[u8],
     allow_protected: bool,
-) -> Result<()> {
-    XmlDocument::parse(campaign.to_vec(), XmlLimits::default())?;
+) -> Result<bool> {
     let descriptor = parse_descriptor(
         descriptor.to_vec(),
         XmlLimits {
@@ -1252,12 +1311,11 @@ fn validate_supported_write_pair(
             ..XmlLimits::default()
         },
     )?;
-    if descriptor.metadata.compressed {
-        return Err(CoreError::new(
-            ErrorCode::UnsupportedCompression,
-            "compressed saves cannot be written",
-        ));
-    }
+    decode_campaign(
+        campaign.to_vec(),
+        descriptor.metadata.compressed,
+        XmlLimits::default(),
+    )?;
     if descriptor.metadata.game_version != SUPPORTED_GAME_VERSION
         || descriptor.metadata.save_format != SUPPORTED_SAVE_FORMAT
     {
@@ -1270,6 +1328,16 @@ fn validate_supported_write_pair(
     if (descriptor.metadata.iron_mode || descriptor.metadata.autosave) && !allow_protected {
         return Err(CoreError::invalid_edit(
             "protected save restore/apply is not authorized for this session",
+        ));
+    }
+    Ok(descriptor.metadata.compressed)
+}
+
+fn validate_campaign_location(location: &SaveLocation, compressed: bool) -> Result<()> {
+    if location.campaign_path != location.save_dir.join(campaign_file_name(compressed)) {
+        return Err(CoreError::new(
+            ErrorCode::InvalidPath,
+            "campaign file path does not match the descriptor's compression format",
         ));
     }
     Ok(())
@@ -1314,7 +1382,8 @@ fn read_pair_at_revision(
             "save-copy bytes do not match the durable transaction journal",
         ));
     }
-    validate_supported_write_pair(&campaign, &descriptor, true)?;
+    let compressed = validate_supported_write_pair(&campaign, &descriptor, true)?;
+    validate_campaign_location(location, compressed)?;
     Ok((campaign, descriptor))
 }
 
@@ -1330,7 +1399,8 @@ fn read_locked_supported_pair(location: &SaveLocation) -> Result<(Vec<u8>, Vec<u
     };
     let campaign = read_locked(&mut campaign_file, XmlLimits::default().max_bytes)?;
     let descriptor = read_locked(&mut descriptor_file, 4 * 1024 * 1024)?;
-    validate_supported_write_pair(&campaign, &descriptor, true)?;
+    let compressed = validate_supported_write_pair(&campaign, &descriptor, true)?;
+    validate_campaign_location(location, compressed)?;
     let _ = FileExt::unlock(&campaign_file);
     let _ = FileExt::unlock(&descriptor_file);
     Ok((campaign, descriptor))
@@ -1377,7 +1447,11 @@ fn ensure_save_inactive(location: &SaveLocation) -> Result<()> {
 }
 
 fn ensure_no_starsector_inprogress_files(location: &SaveLocation) -> Result<()> {
-    for file_name in ["campaign.xml.inprogress", "descriptor.xml.inprogress"] {
+    for file_name in [
+        "campaign.xml.inprogress",
+        "campaign.zip.inprogress",
+        "descriptor.xml.inprogress",
+    ] {
         let path = location.save_dir.join(file_name);
         match fs::symlink_metadata(&path) {
             Ok(_) => {
@@ -2550,14 +2624,14 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn cleanup_copy_staging(staging: &Path) -> Result<()> {
+fn cleanup_copy_staging(staging: &Path, compressed: bool) -> Result<()> {
     if !staging.exists() {
         return Ok(());
     }
     ensure_regular_directory(staging)?;
     let mut entries = Vec::new();
     for (index, entry) in fs::read_dir(staging)?.enumerate() {
-        if index >= 3 {
+        if index >= 2 {
             return Err(CoreError::new(
                 ErrorCode::RecoveryRequired,
                 "save-copy staging contains unexpected files",
@@ -2565,7 +2639,7 @@ fn cleanup_copy_staging(staging: &Path) -> Result<()> {
         }
         let entry = entry?;
         let name = entry.file_name();
-        if name != "campaign.xml" && name != "descriptor.xml" {
+        if name != campaign_file_name(compressed) && name != "descriptor.xml" {
             return Err(CoreError::new(
                 ErrorCode::RecoveryRequired,
                 "save-copy staging contains an unexpected file",
@@ -2642,15 +2716,8 @@ fn validate_committed_pair(
             "committed bytes differ from the validated output",
         ));
     }
-    XmlDocument::parse(campaign.clone(), XmlLimits::default())?;
-    parse_descriptor(
-        descriptor.clone(),
-        XmlLimits {
-            max_bytes: 4 * 1024 * 1024,
-            max_elements: 100_000,
-            ..XmlLimits::default()
-        },
-    )?;
+    let compressed = validate_supported_write_pair(&campaign, &descriptor, true)?;
+    validate_campaign_location(location, compressed)?;
     let _ = FileExt::unlock(&campaign_file);
     let _ = FileExt::unlock(&descriptor_file);
     Ok((campaign, descriptor))
@@ -2774,7 +2841,7 @@ fn replace_pair(
         return Err(CoreError::new(
             ErrorCode::RecoveryRequired,
             format!(
-                "the selected save became active after campaign.xml was replaced: {activity_error}"
+                "the selected save became active after its campaign file was replaced: {activity_error}"
             ),
         ));
     }
@@ -2982,6 +3049,7 @@ fn sanitize_copy_name(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::campaign::CampaignEncoding;
     use crate::model::{DecimalU64, Edit};
     use crate::semantic::{OpenOptions as SaveOpenOptions, OpenedSave};
     use tempfile::tempdir;
@@ -3013,14 +3081,371 @@ mod tests {
     }
 
     fn open_editable_fixture(save_dir: &Path) -> OpenedSave {
+        open_editable_fixture_with_compression(save_dir, false)
+    }
+
+    fn fixture_campaign(xml: &[u8], compressed: bool) -> Vec<u8> {
+        let encoding = if compressed {
+            CampaignEncoding::Zip {
+                member_name: "campaign.xml".to_owned(),
+                compression: zip::CompressionMethod::Deflated,
+            }
+        } else {
+            CampaignEncoding::Xml
+        };
+        encode_campaign(xml, &encoding, XmlLimits::default().max_bytes).unwrap()
+    }
+
+    fn fixture_descriptor(descriptor: Vec<u8>, compressed: bool) -> Vec<u8> {
+        if compressed {
+            String::from_utf8(descriptor)
+                .unwrap()
+                .replace(
+                    "<compressed>false</compressed>",
+                    "<compressed>true</compressed>",
+                )
+                .into_bytes()
+        } else {
+            descriptor
+        }
+    }
+
+    fn open_editable_fixture_with_compression(save_dir: &Path, compressed: bool) -> OpenedSave {
         fs::create_dir(save_dir).unwrap();
-        fs::write(save_dir.join("campaign.xml"), editable_campaign()).unwrap();
-        fs::write(save_dir.join("descriptor.xml"), editable_descriptor()).unwrap();
+        fs::write(
+            save_dir.join(campaign_file_name(compressed)),
+            fixture_campaign(&editable_campaign(), compressed),
+        )
+        .unwrap();
+        fs::write(
+            save_dir.join("descriptor.xml"),
+            fixture_descriptor(editable_descriptor(), compressed),
+        )
+        .unwrap();
         OpenedSave::open(
             SaveLocation::from_save_dir(save_dir),
             SaveOpenOptions::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn compressed_apply_backup_and_restore_keep_original_encoding_and_bytes() {
+        let root = tempdir().unwrap();
+        let source_dir = root.path().join("source-save");
+        let opened = open_editable_fixture_with_compression(&source_dir, true);
+        let location = opened.location().clone();
+        let save_id = opened.snapshot().save_id.clone();
+        let source_campaign = fs::read(&location.campaign_path).unwrap();
+        let source_descriptor = fs::read(&location.descriptor_path).unwrap();
+        let store = BackupStore::new(root.path().join("backups"));
+
+        let unlock_backup = store
+            .backup_current(&save_id, location.clone(), "safety backup", true)
+            .unwrap();
+        let unlock_dir = store.root.join(&save_id).join(unlock_backup.backup_id);
+        assert_eq!(
+            fs::read(unlock_dir.join("campaign.xml")).unwrap(),
+            source_campaign
+        );
+        let review = opened
+            .prepare_review(&[Edit::SetCredits { value: 2345.5 }])
+            .unwrap();
+        let expected_campaign = review.campaign_output.clone();
+        let applied = store.apply_replace(review, false).unwrap();
+        assert_eq!(
+            applied.location.campaign_path,
+            source_dir.join("campaign.zip")
+        );
+        assert!(!source_dir.join("campaign.xml").exists());
+        assert_eq!(
+            fs::read(&location.campaign_path).unwrap(),
+            expected_campaign
+        );
+        let reopened = OpenedSave::open(location.clone(), SaveOpenOptions::default()).unwrap();
+        assert!(reopened.snapshot().metadata.compressed);
+        let (campaign_xml, _) =
+            decode_campaign(expected_campaign.clone(), true, XmlLimits::default()).unwrap();
+        assert!(String::from_utf8_lossy(campaign_xml.bytes()).contains("<value>2345.5</value>"));
+        let backup = applied.backup.unwrap();
+        let backup_dir = store.root.join(&save_id).join(&backup.backup_id);
+        assert_eq!(
+            fs::read(backup_dir.join("campaign.xml")).unwrap(),
+            source_campaign
+        );
+        assert_eq!(
+            fs::read(backup_dir.join("descriptor.xml")).unwrap(),
+            source_descriptor
+        );
+
+        let restored = store
+            .restore(
+                &save_id,
+                &backup.backup_id,
+                location.clone(),
+                &applied.revision,
+            )
+            .unwrap();
+        assert_eq!(restored.location, location);
+        assert_eq!(restored.revision, backup.revision);
+        assert_eq!(fs::read(&location.campaign_path).unwrap(), source_campaign);
+        assert_eq!(
+            fs::read(&location.descriptor_path).unwrap(),
+            source_descriptor
+        );
+        let safety_backup = restored.backup.unwrap();
+        let safety_dir = store.root.join(&save_id).join(safety_backup.backup_id);
+        assert_eq!(
+            fs::read(safety_dir.join("campaign.xml")).unwrap(),
+            expected_campaign
+        );
+        assert!(store.pending_recoveries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn compressed_save_copy_patches_xml_and_keeps_source_archive_byte_identical() {
+        let root = tempdir().unwrap();
+        let source_dir = root.path().join("source-save");
+        let opened = open_editable_fixture_with_compression(&source_dir, true);
+        let source_campaign = fs::read(&opened.location().campaign_path).unwrap();
+        let source_descriptor = fs::read(&opened.location().descriptor_path).unwrap();
+        let review = opened
+            .prepare_review(&[Edit::SetCredits { value: 2345.5 }])
+            .unwrap();
+        let copies = root.path().join("copies");
+        fs::create_dir(&copies).unwrap();
+        let store = BackupStore::new(root.path().join("backups"));
+        let outcome = store.save_copy(review, &copies, "Compressed Copy").unwrap();
+
+        assert_eq!(
+            fs::read(source_dir.join("campaign.zip")).unwrap(),
+            source_campaign
+        );
+        assert_eq!(
+            fs::read(source_dir.join("descriptor.xml")).unwrap(),
+            source_descriptor
+        );
+        assert_eq!(
+            outcome.location.campaign_path.file_name().unwrap(),
+            "campaign.zip"
+        );
+        assert!(!outcome.location.save_dir.join("campaign.xml").exists());
+        let reopened =
+            OpenedSave::open(outcome.location.clone(), SaveOpenOptions::default()).unwrap();
+        assert!(reopened.snapshot().metadata.compressed);
+        let (campaign_xml, _) = decode_campaign(
+            fs::read(&outcome.location.campaign_path).unwrap(),
+            true,
+            XmlLimits::default(),
+        )
+        .unwrap();
+        assert!(String::from_utf8_lossy(campaign_xml.bytes()).contains("<value>2345.5</value>"));
+        assert_eq!(
+            campaign_xml
+                .child_text(campaign_xml.root(), "saveDirName")
+                .unwrap(),
+            outcome
+                .location
+                .save_dir
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
+        );
+        let backup = outcome.backup.unwrap();
+        let backup_dir = store.root.join(&backup.save_id).join(&backup.backup_id);
+        assert_eq!(
+            fs::read(backup_dir.join("campaign.xml")).unwrap(),
+            source_campaign
+        );
+        assert_eq!(
+            fs::read(backup_dir.join("descriptor.xml")).unwrap(),
+            source_descriptor
+        );
+        assert!(store.pending_recoveries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn compressed_writes_reject_same_length_archive_changes_even_when_xml_is_unchanged() {
+        for copy in [false, true] {
+            let root = tempdir().unwrap();
+            let source_dir = root.path().join("source-save");
+            let opened = open_editable_fixture_with_compression(&source_dir, true);
+            let review = opened
+                .prepare_review(&[Edit::SetCredits { value: 2000.0 }])
+                .unwrap();
+            let mut replacement = review.campaign_source.clone();
+            // The synthetic archive has no comment. Change its DOS timestamp
+            // consistently in the local header and central directory, leaving
+            // the XML, CRC, compressed payload, and byte length untouched.
+            let central_offset = u32::from_le_bytes(
+                replacement[replacement.len() - 6..replacement.len() - 2]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            replacement[10] ^= 1;
+            replacement[central_offset + 12] ^= 1;
+            assert_ne!(replacement, review.campaign_source);
+            assert_eq!(replacement.len(), review.campaign_source.len());
+            let (xml, _) =
+                decode_campaign(replacement.clone(), true, XmlLimits::default()).unwrap();
+            assert_eq!(xml.bytes(), editable_campaign());
+            fs::write(&opened.location().campaign_path, &replacement).unwrap();
+            let store = BackupStore::new(root.path().join("backups"));
+            let error = if copy {
+                let copies = root.path().join("copies");
+                fs::create_dir(&copies).unwrap();
+                store.save_copy(review, &copies, "stale").unwrap_err()
+            } else {
+                store.apply_replace(review, false).unwrap_err()
+            };
+            assert_eq!(error.code, ErrorCode::StaleSave);
+            assert_eq!(
+                fs::read(&opened.location().campaign_path).unwrap(),
+                replacement
+            );
+            assert!(!store.root.exists());
+        }
+    }
+
+    #[test]
+    fn corrupt_compressed_campaigns_fail_before_backups_or_live_writes() {
+        let root = tempdir().unwrap();
+        let source_dir = root.path().join("source-save");
+        let opened = open_editable_fixture_with_compression(&source_dir, true);
+        let location = opened.location().clone();
+        let original_campaign = fs::read(&location.campaign_path).unwrap();
+        let original_descriptor = fs::read(&location.descriptor_path).unwrap();
+        let mut review = opened
+            .prepare_review(&[Edit::SetCredits { value: 2000.0 }])
+            .unwrap();
+        review.campaign_output = b"broken archive".to_vec();
+        let store = BackupStore::new(root.path().join("backups"));
+        assert!(store.apply_replace(review, false).is_err());
+        assert_eq!(
+            fs::read(&location.campaign_path).unwrap(),
+            original_campaign
+        );
+        assert_eq!(
+            fs::read(&location.descriptor_path).unwrap(),
+            original_descriptor
+        );
+        assert!(!store.root.exists());
+
+        let mut review = opened
+            .prepare_review(&[Edit::SetCredits { value: 2000.0 }])
+            .unwrap();
+        review.campaign_output = b"broken archive".to_vec();
+        let copies = root.path().join("copies");
+        fs::create_dir(&copies).unwrap();
+        assert!(store.save_copy(review, &copies, "corrupt").is_err());
+        assert_eq!(fs::read_dir(&copies).unwrap().count(), 0);
+        assert_eq!(
+            fs::read(&location.campaign_path).unwrap(),
+            original_campaign
+        );
+        assert_eq!(
+            fs::read(&location.descriptor_path).unwrap(),
+            original_descriptor
+        );
+        assert!(!store.root.exists());
+
+        fs::write(&location.campaign_path, b"broken archive").unwrap();
+        assert!(store
+            .backup_current(
+                &opened.snapshot().save_id,
+                location.clone(),
+                "corrupt",
+                true
+            )
+            .is_err());
+        assert_eq!(
+            fs::read(&location.campaign_path).unwrap(),
+            b"broken archive"
+        );
+        assert_eq!(
+            fs::read(&location.descriptor_path).unwrap(),
+            original_descriptor
+        );
+        assert!(!store.root.exists());
+    }
+
+    #[test]
+    fn corrupt_compressed_restore_backup_fails_even_with_valid_manifest_hashes() {
+        let root = tempdir().unwrap();
+        let source_dir = root.path().join("source-save");
+        let opened = open_editable_fixture_with_compression(&source_dir, true);
+        let location = opened.location().clone();
+        let source_campaign = fs::read(&location.campaign_path).unwrap();
+        let source_descriptor = fs::read(&location.descriptor_path).unwrap();
+        let store = BackupStore::new(root.path().join("backups"));
+        let save_id = &opened.snapshot().save_id;
+        let backup = store
+            .create_backup(
+                save_id,
+                b"broken archive",
+                &source_descriptor,
+                true,
+                "corrupt",
+            )
+            .unwrap();
+        assert!(store
+            .restore(
+                save_id,
+                &backup.backup_id,
+                location.clone(),
+                &opened.snapshot().revision
+            )
+            .is_err());
+        assert_eq!(fs::read(&location.campaign_path).unwrap(), source_campaign);
+        assert_eq!(
+            fs::read(&location.descriptor_path).unwrap(),
+            source_descriptor
+        );
+        assert_eq!(store.list(save_id).unwrap().len(), 1);
+        assert!(store.pending_recoveries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cross_format_restore_fails_before_mutating_live_files_or_creating_safety_backup() {
+        for compressed in [false, true] {
+            let root = tempdir().unwrap();
+            let source_dir = root.path().join("source-save");
+            let opened = open_editable_fixture_with_compression(&source_dir, compressed);
+            let location = opened.location().clone();
+            let source_campaign = fs::read(&location.campaign_path).unwrap();
+            let source_descriptor = fs::read(&location.descriptor_path).unwrap();
+            let store = BackupStore::new(root.path().join("backups"));
+            let save_id = &opened.snapshot().save_id;
+            let backup = store
+                .create_backup(
+                    save_id,
+                    &fixture_campaign(&editable_campaign(), !compressed),
+                    &fixture_descriptor(editable_descriptor(), !compressed),
+                    true,
+                    "opposite encoding",
+                )
+                .unwrap();
+            let error = store
+                .restore(
+                    save_id,
+                    &backup.backup_id,
+                    location.clone(),
+                    &opened.snapshot().revision,
+                )
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidEdit);
+            assert!(error
+                .message
+                .contains("different campaign compression format"));
+            assert_eq!(fs::read(&location.campaign_path).unwrap(), source_campaign);
+            assert_eq!(
+                fs::read(&location.descriptor_path).unwrap(),
+                source_descriptor
+            );
+            assert_eq!(store.list(save_id).unwrap().len(), 1);
+            assert!(!source_dir.join(campaign_file_name(!compressed)).exists());
+            assert!(store.pending_recoveries().unwrap().is_empty());
+        }
     }
 
     #[test]
@@ -3211,71 +3636,81 @@ mod tests {
 
     #[test]
     fn pending_save_copy_recovery_finishes_validated_staging() {
-        let root = tempdir().unwrap();
-        let source_dir = root.path().join("source-save");
-        let opened = open_editable_fixture(&source_dir);
-        let review = opened
-            .prepare_review(&[Edit::SetCredits { value: 1500.0 }])
-            .unwrap();
-        let copies = root.path().join("copies");
-        fs::create_dir(&copies).unwrap();
-        let store = BackupStore::new(root.path().join("backups"));
-        let applied = store.save_copy(review, &copies, "recoverable").unwrap();
-        let backup = applied.backup.unwrap();
-        let backup_dir = store.root.join(&backup.save_id).join(&backup.backup_id);
-        let started_path = backup_dir.join("transaction-started.json");
-        let mut journal: JournalRecord =
-            serde_json::from_slice(&fs::read(&started_path).unwrap()).unwrap();
-        let staging = journal.copy.as_ref().unwrap().staging.clone();
+        for compressed in [false, true] {
+            for published in [false, true] {
+                let root = tempdir().unwrap();
+                let source_dir = root.path().join("source-save");
+                let opened = open_editable_fixture_with_compression(&source_dir, compressed);
+                let review = opened
+                    .prepare_review(&[Edit::SetCredits { value: 1500.0 }])
+                    .unwrap();
+                let copies = root.path().join("copies");
+                fs::create_dir(&copies).unwrap();
+                let store = BackupStore::new(root.path().join("backups"));
+                let applied = store.save_copy(review, &copies, "recoverable").unwrap();
+                let backup = applied.backup.unwrap();
+                let backup_dir = store.root.join(&backup.save_id).join(&backup.backup_id);
+                let started_path = backup_dir.join("transaction-started.json");
+                let mut journal: JournalRecord =
+                    serde_json::from_slice(&fs::read(&started_path).unwrap()).unwrap();
+                let staging = journal.copy.as_ref().unwrap().staging.clone();
 
-        fs::remove_file(backup_dir.join("transaction-complete.json")).unwrap();
-        fs::rename(&applied.location.save_dir, &staging).unwrap();
-        update_journal_phase(&backup_dir, &mut journal, "copy_staged_validated").unwrap();
-        assert_eq!(store.pending_recoveries().unwrap().len(), 1);
+                fs::remove_file(backup_dir.join("transaction-complete.json")).unwrap();
+                if !published {
+                    fs::rename(&applied.location.save_dir, &staging).unwrap();
+                    update_journal_phase(&backup_dir, &mut journal, "copy_staged_validated")
+                        .unwrap();
+                }
+                assert_eq!(store.pending_recoveries().unwrap().len(), 1);
 
-        let recovered = store
-            .recover_pending(&backup.save_id, &backup.backup_id)
-            .unwrap();
-        assert_eq!(recovered.location, applied.location);
-        assert!(recovered.location.campaign_path.exists());
-        assert!(!staging.exists());
-        assert_eq!(recovered.backup, Some(backup));
-        assert!(store.pending_recoveries().unwrap().is_empty());
+                let recovered = store
+                    .recover_pending(&backup.save_id, &backup.backup_id)
+                    .unwrap();
+                assert_eq!(recovered.location, applied.location);
+                assert!(recovered.location.campaign_path.exists());
+                assert!(!staging.exists());
+                assert_eq!(recovered.backup, Some(backup));
+                assert!(store.pending_recoveries().unwrap().is_empty());
+            }
+        }
     }
 
     #[test]
     fn pending_save_copy_recovery_discards_only_incomplete_staging() {
-        let root = tempdir().unwrap();
-        let source_dir = root.path().join("source-save");
-        let opened = open_editable_fixture(&source_dir);
-        let review = opened
-            .prepare_review(&[Edit::SetCredits { value: 1600.0 }])
-            .unwrap();
-        let copies = root.path().join("copies");
-        fs::create_dir(&copies).unwrap();
-        let store = BackupStore::new(root.path().join("backups"));
-        let applied = store.save_copy(review, &copies, "partial").unwrap();
-        let backup = applied.backup.unwrap();
-        let backup_dir = store.root.join(&backup.save_id).join(&backup.backup_id);
-        let mut journal: JournalRecord =
-            serde_json::from_slice(&fs::read(backup_dir.join("transaction-started.json")).unwrap())
+        for compressed in [false, true] {
+            let root = tempdir().unwrap();
+            let source_dir = root.path().join("source-save");
+            let opened = open_editable_fixture_with_compression(&source_dir, compressed);
+            let review = opened
+                .prepare_review(&[Edit::SetCredits { value: 1600.0 }])
                 .unwrap();
-        let staging = journal.copy.as_ref().unwrap().staging.clone();
-
-        fs::remove_file(backup_dir.join("transaction-complete.json")).unwrap();
-        fs::rename(&applied.location.save_dir, &staging).unwrap();
-        fs::remove_file(staging.join("descriptor.xml")).unwrap();
-        update_journal_phase(&backup_dir, &mut journal, "copy_staging_created").unwrap();
-
-        let recovered = store
-            .recover_pending(&backup.save_id, &backup.backup_id)
+            let copies = root.path().join("copies");
+            fs::create_dir(&copies).unwrap();
+            let store = BackupStore::new(root.path().join("backups"));
+            let applied = store.save_copy(review, &copies, "partial").unwrap();
+            let backup = applied.backup.unwrap();
+            let backup_dir = store.root.join(&backup.save_id).join(&backup.backup_id);
+            let mut journal: JournalRecord = serde_json::from_slice(
+                &fs::read(backup_dir.join("transaction-started.json")).unwrap(),
+            )
             .unwrap();
-        assert_eq!(recovered.location.save_dir, source_dir);
-        assert!(!applied.location.save_dir.exists());
-        assert!(!staging.exists());
-        assert!(source_dir.join("campaign.xml").exists());
-        assert!(source_dir.join("descriptor.xml").exists());
-        assert!(store.pending_recoveries().unwrap().is_empty());
+            let staging = journal.copy.as_ref().unwrap().staging.clone();
+
+            fs::remove_file(backup_dir.join("transaction-complete.json")).unwrap();
+            fs::rename(&applied.location.save_dir, &staging).unwrap();
+            fs::remove_file(staging.join("descriptor.xml")).unwrap();
+            update_journal_phase(&backup_dir, &mut journal, "copy_staging_created").unwrap();
+
+            let recovered = store
+                .recover_pending(&backup.save_id, &backup.backup_id)
+                .unwrap();
+            assert_eq!(recovered.location.save_dir, source_dir);
+            assert!(!applied.location.save_dir.exists());
+            assert!(!staging.exists());
+            assert!(source_dir.join(campaign_file_name(compressed)).exists());
+            assert!(source_dir.join("descriptor.xml").exists());
+            assert!(store.pending_recoveries().unwrap().is_empty());
+        }
     }
 
     #[test]
@@ -3355,19 +3790,25 @@ mod tests {
 
     #[test]
     fn starsector_inprogress_files_block_before_a_transaction_backup() {
-        let root = tempdir().unwrap();
-        let source_dir = root.path().join("source-save");
-        let opened = open_editable_fixture(&source_dir);
-        let review = opened
-            .prepare_review(&[Edit::SetCredits { value: 1200.0 }])
+        for compressed in [false, true] {
+            let root = tempdir().unwrap();
+            let source_dir = root.path().join("source-save");
+            let opened = open_editable_fixture_with_compression(&source_dir, compressed);
+            let review = opened
+                .prepare_review(&[Edit::SetCredits { value: 1200.0 }])
+                .unwrap();
+            fs::write(
+                source_dir.join(format!("{}.inprogress", campaign_file_name(compressed))),
+                b"partial",
+            )
             .unwrap();
-        fs::write(source_dir.join("campaign.xml.inprogress"), b"partial").unwrap();
-        let store = BackupStore::new(root.path().join("backups"));
+            let store = BackupStore::new(root.path().join("backups"));
 
-        let error = store.apply_replace(review, false).unwrap_err();
+            let error = store.apply_replace(review, false).unwrap_err();
 
-        assert_eq!(error.code, ErrorCode::GameRunning);
-        assert!(!store.root.exists());
+            assert_eq!(error.code, ErrorCode::GameRunning);
+            assert!(!store.root.exists());
+        }
     }
 
     #[cfg(windows)]
@@ -4002,57 +4443,125 @@ mod tests {
 
     #[test]
     fn pending_recovery_restores_validated_pair_and_preserves_raw_current_bytes() {
-        let root = tempdir().unwrap();
-        let save_dir = root.path().join("save");
-        fs::create_dir(&save_dir).unwrap();
-        let location = SaveLocation::from_save_dir(&save_dir);
-        fs::write(&location.campaign_path, b"broken campaign").unwrap();
-        fs::write(&location.descriptor_path, b"broken descriptor").unwrap();
-        let save_id = opaque_id("save", save_dir.to_string_lossy().as_bytes());
-        let store = BackupStore::new(root.path().join("backups"));
-        let recovery = store
-            .create_backup(
-                &save_id,
-                &valid_campaign(),
-                &valid_descriptor(),
-                true,
-                "transaction source",
+        for compressed in [false, true] {
+            let root = tempdir().unwrap();
+            let save_dir = root.path().join("save");
+            fs::create_dir(&save_dir).unwrap();
+            let location = SaveLocation::from_save_dir(&save_dir).with_compression(compressed);
+            fs::write(&location.campaign_path, b"broken campaign").unwrap();
+            fs::write(&location.descriptor_path, b"broken descriptor").unwrap();
+            let save_id = opaque_id("save", save_dir.to_string_lossy().as_bytes());
+            let store = BackupStore::new(root.path().join("backups"));
+            let restore_campaign = fixture_campaign(&valid_campaign(), compressed);
+            let restore_descriptor = fixture_descriptor(valid_descriptor(), compressed);
+            let recovery = store
+                .create_backup(
+                    &save_id,
+                    &restore_campaign,
+                    &restore_descriptor,
+                    true,
+                    "transaction source",
+                )
+                .unwrap();
+            let recovery_dir = store.root.join(&save_id).join(&recovery.backup_id);
+            let journal = JournalRecord {
+                schema: 1,
+                save_id: save_id.clone(),
+                backup_id: recovery.backup_id.clone(),
+                phase: "prepared".to_owned(),
+                destination: save_dir,
+                copy: None,
+            };
+            write_new_synced(
+                &recovery_dir.join("transaction-started.json"),
+                &serde_json::to_vec(&journal).unwrap(),
             )
             .unwrap();
-        let recovery_dir = store.root.join(&save_id).join(&recovery.backup_id);
-        let journal = JournalRecord {
-            schema: 1,
-            save_id: save_id.clone(),
-            backup_id: recovery.backup_id.clone(),
-            phase: "prepared".to_owned(),
-            destination: save_dir,
-            copy: None,
-        };
-        write_new_synced(
-            &recovery_dir.join("transaction-started.json"),
-            &serde_json::to_vec(&journal).unwrap(),
-        )
-        .unwrap();
 
-        let outcome = store
-            .recover_pending(&save_id, &recovery.backup_id)
+            let outcome = store
+                .recover_pending(&save_id, &recovery.backup_id)
+                .unwrap();
+            assert_eq!(outcome.location, location);
+            assert_eq!(fs::read(location.campaign_path).unwrap(), restore_campaign);
+            assert_eq!(
+                fs::read(location.descriptor_path).unwrap(),
+                restore_descriptor
+            );
+            let emergency = outcome.backup.unwrap();
+            let emergency_dir = store.root.join(&save_id).join(emergency.backup_id);
+            assert_eq!(
+                fs::read(emergency_dir.join("campaign.xml")).unwrap(),
+                b"broken campaign"
+            );
+            assert_eq!(
+                fs::read(emergency_dir.join("descriptor.xml")).unwrap(),
+                b"broken descriptor"
+            );
+            let durable_journal: JournalRecord = serde_json::from_slice(
+                &fs::read(recovery_dir.join("transaction-started.json")).unwrap(),
+            )
             .unwrap();
-        assert_eq!(fs::read(location.campaign_path).unwrap(), valid_campaign());
-        assert_eq!(
-            fs::read(location.descriptor_path).unwrap(),
-            valid_descriptor()
-        );
-        let emergency = outcome.backup.unwrap();
-        let emergency_dir = store.root.join(&save_id).join(emergency.backup_id);
-        assert_eq!(
-            fs::read(emergency_dir.join("campaign.xml")).unwrap(),
-            b"broken campaign"
-        );
-        let durable_journal: JournalRecord = serde_json::from_slice(
-            &fs::read(recovery_dir.join("transaction-started.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(durable_journal.phase, "recovery_descriptor_replaced");
-        assert!(store.pending_recoveries().unwrap().is_empty());
+            assert_eq!(durable_journal.phase, "recovery_descriptor_replaced");
+            assert!(store.pending_recoveries().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn pending_recovery_rejects_an_external_change_of_compression_format() {
+        for compressed in [false, true] {
+            let root = tempdir().unwrap();
+            let source_dir = root.path().join("source-save");
+            let opened = open_editable_fixture_with_compression(&source_dir, compressed);
+            let location = opened.location().clone();
+            let save_id = &opened.snapshot().save_id;
+            let original_campaign = fs::read(&location.campaign_path).unwrap();
+            let original_descriptor = fs::read(&location.descriptor_path).unwrap();
+            let store = BackupStore::new(root.path().join("backups"));
+            let backup = store
+                .create_backup(
+                    save_id,
+                    &original_campaign,
+                    &original_descriptor,
+                    true,
+                    "pending",
+                )
+                .unwrap();
+            let backup_dir = store.root.join(save_id).join(&backup.backup_id);
+            let journal = JournalRecord {
+                schema: 1,
+                save_id: save_id.clone(),
+                backup_id: backup.backup_id.clone(),
+                phase: "apply_campaign_replaced".to_owned(),
+                destination: source_dir.clone(),
+                copy: None,
+            };
+            write_new_synced(
+                &backup_dir.join("transaction-started.json"),
+                &serde_json::to_vec(&journal).unwrap(),
+            )
+            .unwrap();
+
+            let external_campaign = fixture_campaign(&editable_campaign(), !compressed);
+            let external_descriptor = fixture_descriptor(editable_descriptor(), !compressed);
+            let external_campaign_path = source_dir.join(campaign_file_name(!compressed));
+            fs::write(&external_campaign_path, &external_campaign).unwrap();
+            fs::write(&location.descriptor_path, &external_descriptor).unwrap();
+            let error = store
+                .recover_pending(save_id, &backup.backup_id)
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::RecoveryRequired);
+            assert!(error.message.contains("compression format changed"));
+            assert_eq!(
+                fs::read(&location.campaign_path).unwrap(),
+                original_campaign
+            );
+            assert_eq!(
+                fs::read(&location.descriptor_path).unwrap(),
+                external_descriptor
+            );
+            assert_eq!(fs::read(external_campaign_path).unwrap(), external_campaign);
+            assert_eq!(store.list(save_id).unwrap().len(), 1);
+            assert_eq!(store.pending_recoveries().unwrap().len(), 1);
+        }
     }
 }

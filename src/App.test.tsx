@@ -170,6 +170,62 @@ describe("Ludd’s Blessing app shell", () => {
     expect(scanSaves.mock.invocationCallOrder[1]).toBeLessThan(openSave.mock.invocationCallOrder[0]);
   });
 
+  it.each([true, false])("opens and edits a compressed save after refresh (initially compressed: %s)", async (initiallyCompressed) => {
+    const compressedSave = { ...demoSaves()[0], compressed: true };
+    const snapshot = structuredClone(demoSnapshot(compressedSave.id));
+    snapshot.summary = compressedSave;
+    vi.spyOn(api, "scanSaves")
+      .mockResolvedValueOnce([{ ...compressedSave, compressed: initiallyCompressed }])
+      .mockResolvedValue([compressedSave]);
+    const openSave = vi.spyOn(api, "openSave").mockResolvedValue(snapshot);
+    const prepareReview = vi.spyOn(api, "prepareReview");
+    render(<App />);
+
+    const openButton = await screen.findByRole("button", { name: "Open editor" });
+    expect(openButton).toBeEnabled();
+    fireEvent.click(openButton);
+
+    const balance = await screen.findByLabelText("Current balance");
+    expect(balance).toBeEnabled();
+    expect(openSave).toHaveBeenCalledWith(compressedSave.id);
+    fireEvent.change(balance, { target: { value: "90000000" } });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 changes/i }));
+
+    expect(await screen.findByRole("heading", { name: "Review staged changes" })).toBeInTheDocument();
+    expect(prepareReview).toHaveBeenCalledWith(snapshot.sessionId, snapshot.revision, [
+      { type: "set_credits", value: "90000000" },
+    ]);
+  });
+
+  it("keeps an unsupported compressed save read-only while allowing its preview", async () => {
+    const compressedSave = { ...demoSaves()[1], compressed: true };
+    const snapshot = structuredClone(demoSnapshot(compressedSave.id));
+    snapshot.summary = compressedSave;
+    vi.spyOn(api, "scanSaves").mockResolvedValue([compressedSave]);
+    vi.spyOn(api, "openSave").mockResolvedValue(snapshot);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open preview" }));
+
+    expect(await screen.findByLabelText("Current balance")).toBeDisabled();
+    expect(screen.getByText("Opened in read-only preview mode.")).toBeInTheDocument();
+  });
+
+  it("blocks a compressed save that becomes unreadable during refresh", async () => {
+    const compressedSave = { ...demoSaves()[0], compressed: true };
+    vi.spyOn(api, "scanSaves")
+      .mockResolvedValueOnce([compressedSave])
+      .mockResolvedValue([{ ...compressedSave, compatibility: "unreadable" }]);
+    const openSave = vi.spyOn(api, "openSave");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open editor" }));
+
+    expect(await screen.findByText("That save changed and can no longer be opened. The library was refreshed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview unavailable" })).toBeDisabled();
+    expect(openSave).not.toHaveBeenCalled();
+  });
+
   it("does not open a save that disappeared during the automatic refresh", async () => {
     vi.spyOn(api, "scanSaves")
       .mockResolvedValueOnce(demoSaves())

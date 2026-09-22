@@ -98,6 +98,7 @@ pub fn inspect_save_dir(save_dir: &Path, options: ScanOptions) -> Result<SaveSum
             return Ok(invalid_summary(save_id, location, error));
         }
     };
+    let location = location.with_compression(descriptor.metadata.compressed);
 
     let campaign_ok = fs::symlink_metadata(&location.campaign_path)
         .map(|metadata| {
@@ -109,12 +110,10 @@ pub fn inspect_save_dir(save_dir: &Path, options: ScanOptions) -> Result<SaveSum
     let compatibility = if !campaign_ok {
         Compatibility::Invalid {
             code: ErrorCode::InvalidPath,
-            reason: "campaign.xml is missing, symlinked, non-regular, or too large".to_owned(),
-        }
-    } else if descriptor.metadata.compressed {
-        Compatibility::ReadOnly {
-            code: ErrorCode::UnsupportedCompression,
-            reason: "compressed saves are read-only".to_owned(),
+            reason: format!(
+                "{} is missing, symlinked, non-regular, or too large",
+                crate::campaign::campaign_file_name(descriptor.metadata.compressed)
+            ),
         }
     } else if descriptor.metadata.game_version != SUPPORTED_GAME_VERSION
         || descriptor.metadata.save_format != SUPPORTED_SAVE_FORMAT
@@ -248,6 +247,35 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn compressed_descriptor_selects_zip_without_requiring_plaintext() {
+        let root = tempdir().unwrap();
+        let save = root.path().join("save_compressed");
+        fs::create_dir(&save).unwrap();
+        // Scanning is metadata-only; OpenedSave validates the ZIP contents.
+        fs::write(save.join("campaign.zip"), b"campaign archive placeholder").unwrap();
+        fs::write(
+            save.join("descriptor.xml"),
+            "<SaveGameData z=\"1\"><portraitName>p.png</portraitName><characterName>Ada Vale</characterName><saveFileVersion>0.6</saveFileVersion><gameVersion>0.98a-RC8</gameVersion><characterLevel>1</characterLevel><compressed>true</compressed><isIronMode>false</isIronMode><slotCreationTimestamp>1</slotCreationTimestamp></SaveGameData>",
+        )
+        .unwrap();
+
+        let summaries = scan_save_root(root.path(), ScanOptions::default()).unwrap();
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+        assert!(summary.metadata.as_ref().unwrap().compressed);
+        assert_eq!(summary.location.campaign_path, save.join("campaign.zip"));
+        assert_eq!(summary.compatibility, Compatibility::Editable);
+
+        // The descriptor remains authoritative even if the alternate exists.
+        fs::remove_file(save.join("campaign.zip")).unwrap();
+        fs::write(save.join("campaign.xml"), b"inactive plaintext sibling").unwrap();
+        let summary = inspect_save_dir(&save, ScanOptions::default()).unwrap();
+        assert!(matches!(summary.compatibility,
+            Compatibility::Invalid { code: ErrorCode::InvalidPath, ref reason }
+                if reason.contains("campaign.zip")));
     }
 
     #[test]

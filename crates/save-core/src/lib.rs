@@ -4,6 +4,7 @@
 //! It never invokes game code, loads mod jars, or serializes a campaign back to
 //! XML. Mutations are represented as checked byte-span patches.
 
+mod campaign;
 mod descriptor;
 mod discovery;
 mod error;

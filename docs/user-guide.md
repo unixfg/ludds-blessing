@@ -9,7 +9,8 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 - All save processing stays on the local computer. The app has no telemetry, updater, or network feature.
 - The standalone executable requires Microsoft’s WebView2 Evergreen Runtime to already be installed and does not fetch it. WebView2 is normally present on current Windows 10 and 11 systems; [Microsoft provides installation guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution) for systems where it is missing. Microsoft may service that runtime independently; Ludd’s Blessing itself has no updater.
 - The editor does not install, generate, or require a Starsector mod.
-- Only uncompressed Starsector `0.98a-RC8` saves using format `0.6` can be changed. Other detected saves are read-only.
+- Starsector `0.98a-RC8` saves using format `0.6` can be changed with or without `compressSaveGameData: true`. Other detected save versions are read-only.
+- Compressed saves open directly from `campaign.zip` and remain compressed after **Create backup & apply** or **Save a copy**. Backups preserve the original campaign file; the game's compression setting can stay enabled. Restore requires the backup and the current save to use the same compression format.
 - Starsector may remain running while you edit a save that is not currently loaded. Every save the current log session indicates may still be active remains blocked from in-place apply, restore, protected-save unlock, and recovery operations.
 - Keep exactly one normally launched Starsector instance open. Multiple, batch-launched, unpaired, or otherwise unverifiable game processes are blocked; do not launch and close a second instance while the first remains running.
 - Apply and Restore recheck game activity at the write boundary. Do not load, switch to, or save the target in Starsector while the write is running. If the app cannot confirm that the target is inactive, it fails closed rather than replacing the save.
@@ -43,8 +44,9 @@ Ludd’s Blessing is an independent community tool and is not affiliated with or
 - Current and otherwise usable saves sort ahead of unreadable archive entries;
   missing dates never outrank real save dates.
 - If a save is still absent, use **Choose folder** and select the Starsector
-  installation, a `saves` folder, an individual `save_*` folder, or either XML
-  file in that save.
+  installation, a `saves` folder, or an individual `save_*` folder. You can also
+  drop a save folder, `campaign.xml`, `campaign.zip`, or `descriptor.xml` onto
+  the app.
 - Manually registered folders appear under **Settings → Remembered save
   folders**, where unavailable entries can be reviewed or forgotten. Automatic
   platform and installation roots remain internal and cannot be accidentally

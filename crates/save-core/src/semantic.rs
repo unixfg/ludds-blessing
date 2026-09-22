@@ -1,3 +1,4 @@
+use crate::campaign::{decode_campaign, CampaignEncoding};
 use crate::descriptor::{parse_descriptor, DescriptorDocument};
 use crate::error::{CoreError, ErrorCode, Result};
 use crate::file_util::{fingerprint, opaque_id, read_regular_file};
@@ -35,6 +36,10 @@ impl Default for OpenOptions {
 pub struct OpenedSave {
     pub(crate) location: SaveLocation,
     pub(crate) campaign: XmlDocument,
+    pub(crate) campaign_encoding: CampaignEncoding,
+    /// Compressed source bytes are retained for exact revisions and backups.
+    /// Plain XML already owns its source bytes in `campaign`.
+    campaign_source: Option<Vec<u8>>,
     pub(crate) descriptor: DescriptorDocument,
     pub(crate) anchors: CampaignAnchors,
     pub(crate) state: SemanticState,
@@ -49,28 +54,23 @@ impl OpenedSave {
             options.descriptor_limits.max_bytes,
         )?;
         let descriptor = parse_descriptor(descriptor_bytes, options.descriptor_limits)?;
-        if descriptor.metadata.compressed {
-            return Err(CoreError::new(
-                ErrorCode::UnsupportedCompression,
-                "compressed campaign data cannot be opened",
-            ));
-        }
+        let location = location.with_compression(descriptor.metadata.compressed);
         let campaign_bytes =
             read_regular_file(&location.campaign_path, options.campaign_limits.max_bytes)?;
-        let campaign = XmlDocument::parse(campaign_bytes, options.campaign_limits)?;
-        Self::from_documents(location, campaign, descriptor, options)
-    }
-
-    pub(crate) fn from_documents(
-        location: SaveLocation,
-        campaign: XmlDocument,
-        descriptor: DescriptorDocument,
-        options: OpenOptions,
-    ) -> Result<Self> {
+        let campaign_fingerprint = fingerprint(&campaign_bytes);
+        let campaign_source = descriptor
+            .metadata
+            .compressed
+            .then(|| campaign_bytes.clone());
+        let (campaign, campaign_encoding) = decode_campaign(
+            campaign_bytes,
+            descriptor.metadata.compressed,
+            options.campaign_limits,
+        )?;
         let save_id = opaque_id("save", location.save_dir.to_string_lossy().as_bytes());
         let (anchors, state) = extract_campaign(&campaign, &save_id)?;
         let revision = ContentRevision {
-            campaign: fingerprint(campaign.bytes()),
+            campaign: campaign_fingerprint,
             descriptor: fingerprint(descriptor.xml.bytes()),
         };
         let (compatibility, mut capabilities, mut warnings) = capabilities(&descriptor, options);
@@ -90,6 +90,8 @@ impl OpenedSave {
         Ok(Self {
             location,
             campaign,
+            campaign_encoding,
+            campaign_source,
             descriptor,
             anchors,
             state,
@@ -105,6 +107,12 @@ impl OpenedSave {
     pub fn location(&self) -> &SaveLocation {
         &self.location
     }
+
+    pub(crate) fn source_campaign_bytes(&self) -> &[u8] {
+        self.campaign_source
+            .as_deref()
+            .unwrap_or_else(|| self.campaign.bytes())
+    }
 }
 
 fn capabilities(
@@ -116,12 +124,7 @@ fn capabilities(
     let version_ok = metadata.game_version == SUPPORTED_GAME_VERSION
         && metadata.save_format == SUPPORTED_SAVE_FORMAT;
     let write_shape_ok = descriptor.has_complete_write_shape();
-    let compatibility = if metadata.compressed {
-        Compatibility::ReadOnly {
-            code: ErrorCode::UnsupportedCompression,
-            reason: "compressed saves are read-only".to_owned(),
-        }
-    } else if !version_ok {
+    let compatibility = if !version_ok {
         Compatibility::ReadOnly {
             code: ErrorCode::UnsupportedVersion,
             reason: format!(
@@ -136,10 +139,7 @@ fn capabilities(
     } else {
         Compatibility::Editable
     };
-    let base_editable = version_ok
-        && write_shape_ok
-        && !metadata.compressed
-        && (!protected || options.allow_protected);
+    let base_editable = version_ok && write_shape_ok && (!protected || options.allow_protected);
     let progression = base_editable && metadata.enabled_mods.is_empty();
     let reason = if !version_ok {
         Some("unsupported game or save format".to_owned())

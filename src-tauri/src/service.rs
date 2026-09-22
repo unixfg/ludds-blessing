@@ -889,9 +889,12 @@ fn normalize_selected_root(selected: &Path) -> Result<NormalizedRoot, CommandErr
 
     let candidate = if selected.is_file() {
         let file_name = selected.file_name().and_then(|name| name.to_str());
-        if !matches!(file_name, Some("campaign.xml" | "descriptor.xml")) {
+        if !matches!(
+            file_name,
+            Some("campaign.xml" | "campaign.zip" | "descriptor.xml")
+        ) {
             return Err(CommandError::invalid_argument(
-                "Select a Starsector installation, saves folder, save folder, campaign.xml, or descriptor.xml",
+                "Select a Starsector installation, saves folder, save folder, campaign.xml, campaign.zip, or descriptor.xml",
             ));
         }
         selected
@@ -1162,7 +1165,8 @@ fn reject_symlink(path: &Path) -> Result<(), CommandError> {
 }
 
 fn is_save_directory(path: &Path) -> bool {
-    is_regular_non_symlink(&path.join("campaign.xml"))
+    (is_regular_non_symlink(&path.join("campaign.xml"))
+        || is_regular_non_symlink(&path.join("campaign.zip")))
         && is_regular_non_symlink(&path.join("descriptor.xml"))
 }
 
@@ -1606,6 +1610,28 @@ mod tests {
             normalize_selected_root(&save).unwrap().path,
             root.canonicalize().unwrap()
         );
+    }
+
+    #[test]
+    fn compressed_save_inputs_normalize_and_remain_visible_to_bounded_discovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("saves");
+        let save = root.join("save_Test_123");
+        fs::create_dir_all(&save).unwrap();
+        File::create(save.join("campaign.zip")).unwrap();
+        File::create(save.join("descriptor.xml")).unwrap();
+
+        for selected in [
+            save.clone(),
+            save.join("campaign.zip"),
+            save.join("descriptor.xml"),
+        ] {
+            assert_eq!(
+                normalize_selected_root(&selected).unwrap().path,
+                root.canonicalize().unwrap()
+            );
+        }
+        assert_eq!(bounded_save_directories(&root).unwrap(), [save]);
     }
 
     #[test]

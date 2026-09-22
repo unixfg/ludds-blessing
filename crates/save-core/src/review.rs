@@ -1,3 +1,4 @@
+use crate::campaign::encode_campaign;
 use crate::descriptor::parse_descriptor;
 use crate::error::{CoreError, ErrorCode, Result};
 use crate::file_util::fingerprint;
@@ -547,6 +548,15 @@ impl OpenedSave {
         let campaign_output = apply_patches(self.campaign.bytes(), &campaign_patches)?;
         let descriptor_output = apply_patches(self.descriptor.xml.bytes(), &descriptor_patches)?;
         validate_candidate(self, &desired, &campaign_output, &descriptor_output)?;
+        let campaign_output = if campaign_patches.is_empty() {
+            self.source_campaign_bytes().to_vec()
+        } else {
+            encode_campaign(
+                &campaign_output,
+                &self.campaign_encoding,
+                self.options.campaign_limits.max_bytes,
+            )?
+        };
 
         let mut changes = semantic_changes(&self.state, &desired, &additions);
         mark_derived_changes(
@@ -564,7 +574,7 @@ impl OpenedSave {
         Ok(PreparedReview {
             summary,
             location: self.location.clone(),
-            campaign_source: self.campaign.bytes().to_vec(),
+            campaign_source: self.source_campaign_bytes().to_vec(),
             descriptor_source: self.descriptor.xml.bytes().to_vec(),
             campaign_patches,
             descriptor_patches,
@@ -2527,6 +2537,172 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn zip_campaign_fixture(campaign: &str, comment: &str) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        use zip::write::SimpleFileOptions;
+
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive.set_comment(comment.to_owned()).unwrap();
+        archive
+            .start_file(
+                "campaign.xml",
+                SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated)
+                    .compression_level(Some(1)),
+            )
+            .unwrap();
+        archive.write_all(campaign.as_bytes()).unwrap();
+        archive.finish().unwrap().into_inner()
+    }
+
+    fn write_compressed_fixture(root: &Path, descriptor: &str) -> Vec<u8> {
+        let source = zip_campaign_fixture(&campaign_fixture(), "original archive");
+        fs::write(root.join("campaign.zip"), &source).unwrap();
+        fs::write(
+            root.join("descriptor.xml"),
+            descriptor.replace(
+                "<compressed>false</compressed>",
+                "<compressed>true</compressed>",
+            ),
+        )
+        .unwrap();
+        source
+    }
+
+    #[test]
+    fn compressed_review_preserves_xml_except_for_checked_patches() {
+        use std::io::{Cursor, Read};
+
+        let root = tempdir().unwrap();
+        let source = write_compressed_fixture(root.path(), &descriptor_fixture("", false));
+        // A stale plaintext sibling must never override descriptor selection.
+        fs::write(root.path().join("campaign.xml"), "not the active campaign").unwrap();
+        let opened = OpenedSave::open(
+            SaveLocation::from_save_dir(root.path()),
+            OpenOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            opened.location().campaign_path,
+            root.path().join("campaign.zip")
+        );
+        assert_eq!(opened.snapshot().revision.campaign, fingerprint(&source));
+        assert_eq!(opened.campaign.bytes(), campaign_fixture().as_bytes());
+        assert!(opened.snapshot().capabilities.basic_character);
+        let review = opened
+            .prepare_review(&[
+                Edit::SetCredits { value: 2_000.0 },
+                Edit::SetName {
+                    first_name: "Grace".into(),
+                    last_name: "Vale".into(),
+                },
+            ])
+            .unwrap();
+        assert_eq!(review.campaign_source, source);
+        review
+            .validate_against(&source, opened.descriptor.xml.bytes())
+            .unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(&review.campaign_output)).unwrap();
+        assert_eq!(archive.len(), 1);
+        let mut member = archive.by_name("campaign.xml").unwrap();
+        assert_eq!(member.compression(), zip::CompressionMethod::Deflated);
+        let mut edited_xml = Vec::new();
+        member.read_to_end(&mut edited_xml).unwrap();
+        assert_eq!(
+            edited_xml,
+            apply_patches(opened.campaign.bytes(), &review.campaign_patches).unwrap()
+        );
+        let output_descriptor = parse_descriptor(
+            review.descriptor_output.clone(),
+            opened.options.descriptor_limits,
+        )
+        .unwrap();
+        assert!(output_descriptor.metadata.compressed);
+        assert_eq!(output_descriptor.metadata.character_name, "Grace Vale");
+        assert_eq!(
+            review.campaign_output_fingerprint(),
+            fingerprint(&review.campaign_output)
+        );
+        // Reviews are bound to the encoded file, even when the XML is identical.
+        let repacked = zip_campaign_fixture(&campaign_fixture(), "repacked archive");
+        assert_eq!(
+            review
+                .validate_against(&repacked, opened.descriptor.xml.bytes())
+                .unwrap_err()
+                .code,
+            ErrorCode::StaleSave
+        );
+    }
+
+    #[test]
+    fn no_op_compressed_review_leaves_original_zip_bytes_untouched() {
+        let root = tempdir().unwrap();
+        let source = write_compressed_fixture(root.path(), &descriptor_fixture("", false));
+        let opened = OpenedSave::open(
+            SaveLocation::from_save_dir(root.path()),
+            OpenOptions::default(),
+        )
+        .unwrap();
+        let error = opened
+            .prepare_review(&[Edit::SetCredits {
+                value: opened.snapshot().character.credits,
+            }])
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidEdit);
+        assert_eq!(fs::read(root.path().join("campaign.zip")).unwrap(), source);
+    }
+
+    #[test]
+    fn compression_does_not_bypass_version_or_protected_save_gates() {
+        let root = tempdir().unwrap();
+        write_compressed_fixture(root.path(), &descriptor_fixture("", true));
+        let location = SaveLocation::from_save_dir(root.path());
+        let locked = OpenedSave::open(location.clone(), OpenOptions::default()).unwrap();
+        assert!(locked.snapshot().capabilities.protected_save);
+        assert!(!locked.snapshot().capabilities.basic_character);
+        assert!(locked
+            .prepare_review(&[Edit::SetCredits { value: 2_000.0 }])
+            .is_err());
+        let unlocked = OpenedSave::open(
+            location.clone(),
+            OpenOptions {
+                allow_protected: true,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(unlocked
+            .prepare_review(&[Edit::SetCredits { value: 2_000.0 }])
+            .is_ok());
+        write_compressed_fixture(
+            root.path(),
+            &descriptor_fixture("", false).replace("0.98a-RC8", "unsupported"),
+        );
+        let unsupported = OpenedSave::open(location, OpenOptions::default()).unwrap();
+        assert!(matches!(
+            unsupported.snapshot().compatibility,
+            Compatibility::ReadOnly {
+                code: ErrorCode::UnsupportedVersion,
+                ..
+            }
+        ));
+        assert!(!unsupported.snapshot().capabilities.basic_character);
+    }
+
+    #[test]
+    fn missing_compressed_campaign_does_not_fall_back_to_plaintext_sibling() {
+        let root = tempdir().unwrap();
+        write_compressed_fixture(root.path(), &descriptor_fixture("", false));
+        fs::remove_file(root.path().join("campaign.zip")).unwrap();
+        fs::write(root.path().join("campaign.xml"), campaign_fixture()).unwrap();
+        let error = OpenedSave::open(
+            SaveLocation::from_save_dir(root.path()),
+            OpenOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotFound);
     }
 
     #[test]

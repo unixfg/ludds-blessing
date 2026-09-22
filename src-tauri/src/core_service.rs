@@ -1192,12 +1192,6 @@ fn ensure_progression_edit_authorized(
 
 fn authorize_restore(session: &SessionRecord) -> Result<(), CommandError> {
     let metadata = &session.opened.snapshot().metadata;
-    if metadata.compressed {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedCompression,
-            "Compressed saves are read-only",
-        ));
-    }
     if metadata.game_version != save_core::SUPPORTED_GAME_VERSION
         || metadata.save_format != save_core::SUPPORTED_SAVE_FORMAT
     {
@@ -3780,6 +3774,227 @@ mod tests {
         .unwrap();
         let service = CoreService::new(temporary.path().join("app-data")).unwrap();
         (temporary, service)
+    }
+
+    fn compressed_lifecycle_service() -> (tempfile::TempDir, CoreService) {
+        // Synthetic lifecycle_campaign_fixture() in a single-entry DEFLATE ZIP,
+        // generated independently with Python's zipfile module.
+        let campaign = base64::engine::general_purpose::STANDARD
+            .decode(concat!(
+                "UEsDBBQAAAAIAAAAIQDdN7ug9gEAAPIDAAAMAAAAY2FtcGFpZ24ueG1shVNRj9MwDH6/XxHl/dZ2Aw6kNKeJdRISQzzxOnlt1osu",
+                "TaskN+1A/Hdsh7EOIfFQ1fnsz7E/O+rxPDhxMiHa0deyWpRSPOo79RGGCWzvG99bb8R3dEmEJwevJmydMUkEc0S0lFoVMxiD2icI",
+                "0CYTNpCAqA8U5GEwet2B+AbOqIKPahpDCmDTFzr1AaYn28bigl6tPSwm36viJl5NWPbocyHLXAgjWtn4KYx+N3ZGH8FFvG+GqPhs",
+                "nYsNdr2DzjTOJu7woaIU/3AietMT9ejG9plJb5GU7GBiQsn0fVWWpSquAFIpFClH5KPIO/DQm8Dcd8j9rV125l7ez0XNDq2CcUBW",
+                "JOYHjvgDoX2bHa8bxm7tu6/uBQd4GQQWJ7NsNibj0xWvLupdHQj8nQPTRjiZjQ08ALL3ONJ9hbLN8Du1dSnnxbTHDZt0w8DWEq3tb",
+                "jiwBtUKTy1ZOEFhu1rmvu/zKKWYCMOioHuVIk6hlv/dE9o2zlhJgXJihVK4WtLiSdHXctvs1p8b6hh1xTEl1nS5lOK8rCWWcZ74dzj",
+                "zrzvwz9EbEFPiQ+QIZOsfP7F52hvKQ+PGj7sj/bA1CP1I6VflpdEVSXEC92I0bcsC9yWfMpkZFDrba8Q5yRs+jTTvDd3j6L0dycM7Y",
+                "zud1cN97ygIvcXtU9a/AFBLAQIUAxQAAAAIAAAAIQDdN7ug9gEAAPIDAAAMAAAAAAAAAAAAAACAAQAAAABjYW1wYWlnbi54bWxQSwUGAAAA",
+                "AAEAAQA6AAAAIAIAAAAA",
+            ))
+            .unwrap();
+        let (temporary, service) = lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        fs::remove_file(save_dir.join("campaign.xml")).unwrap();
+        fs::write(save_dir.join("campaign.zip"), campaign).unwrap();
+        fs::write(
+            save_dir.join("descriptor.xml"),
+            lifecycle_descriptor_fixture().replace(
+                "<compressed>false</compressed>",
+                "<compressed>true</compressed>",
+            ),
+        )
+        .unwrap();
+        (temporary, service)
+    }
+
+    fn open_compressed_session(service: &CoreService, save_dir: &Path) -> SaveSnapshot {
+        let summary = service
+            .inspect_save(
+                save_dir,
+                RootId::new("root-compressed-test"),
+                SaveId::new("save-compressed-test"),
+            )
+            .unwrap();
+        assert!(summary.compressed);
+        service.open_save(save_dir, None, summary).unwrap()
+    }
+
+    #[test]
+    fn compressed_session_edits_and_restores_the_active_archive_with_an_inactive_xml_sibling() {
+        let (temporary, service) = compressed_lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        let original_campaign = fs::read(save_dir.join("campaign.zip")).unwrap();
+        let original_descriptor = fs::read(save_dir.join("descriptor.xml")).unwrap();
+        let inactive_xml = lifecycle_campaign_fixture().replace("1000.0", "9000.0");
+        fs::write(save_dir.join("campaign.xml"), &inactive_xml).unwrap();
+
+        let snapshot = open_compressed_session(&service, &save_dir);
+        assert_eq!(snapshot.summary.compatibility, CompatibilityState::Editable);
+        assert!(snapshot.write_capability.editable);
+        assert_eq!(snapshot.character.credits, "1000");
+        assert_eq!(
+            service
+                .require_session(&snapshot.session_id)
+                .unwrap()
+                .opened
+                .location()
+                .campaign_path,
+            save_dir.join("campaign.zip")
+        );
+        let review = service
+            .prepare_review(
+                &snapshot.session_id,
+                vec![Edit::SetCredits {
+                    value: "2000".into(),
+                }],
+            )
+            .unwrap();
+        let applied = service
+            .apply_review(&review.review_id, ApplyMode::ReplaceOriginal, true)
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(save_dir.join("campaign.xml")).unwrap(),
+            inactive_xml
+        );
+        let snapshot = open_compressed_session(&service, &save_dir);
+        assert_eq!(snapshot.character.credits, "2000");
+        let restore = service
+            .prepare_restore(&snapshot.session_id, &applied.backup_id.unwrap())
+            .unwrap();
+        service.apply_restore(&restore.review_id, true).unwrap();
+
+        assert_eq!(
+            fs::read(save_dir.join("campaign.zip")).unwrap(),
+            original_campaign
+        );
+        assert_eq!(
+            fs::read(save_dir.join("descriptor.xml")).unwrap(),
+            original_descriptor
+        );
+        assert_eq!(
+            fs::read_to_string(save_dir.join("campaign.xml")).unwrap(),
+            inactive_xml
+        );
+        assert_eq!(
+            open_compressed_session(&service, &save_dir)
+                .character
+                .credits,
+            "1000"
+        );
+    }
+
+    #[test]
+    fn compressed_session_save_copy_publishes_an_editable_compressed_slot() {
+        let (temporary, service) = compressed_lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        let original_campaign = fs::read(save_dir.join("campaign.zip")).unwrap();
+        let original_descriptor = fs::read(save_dir.join("descriptor.xml")).unwrap();
+        let snapshot = open_compressed_session(&service, &save_dir);
+        let review = service
+            .prepare_review(
+                &snapshot.session_id,
+                vec![Edit::SetCredits {
+                    value: "3000".into(),
+                }],
+            )
+            .unwrap();
+        let copied = service
+            .apply_review(
+                &review.review_id,
+                ApplyMode::SaveCopy {
+                    target_root: temporary.path().to_string_lossy().into_owned(),
+                },
+                true,
+            )
+            .unwrap();
+        let copy_dir = PathBuf::from(copied.target_path);
+        assert_ne!(copy_dir, save_dir);
+        assert!(copy_dir.join("campaign.zip").is_file());
+        assert!(!copy_dir.join("campaign.xml").exists());
+        let copy = open_compressed_session(&service, &copy_dir);
+        assert!(copy.write_capability.editable);
+        assert_eq!(copy.character.credits, "3000");
+        assert_eq!(copy.save_id, copied.save_id);
+        assert_ne!(copy.save_id, snapshot.save_id);
+        assert_eq!(
+            fs::read(save_dir.join("campaign.zip")).unwrap(),
+            original_campaign
+        );
+        assert_eq!(
+            fs::read(save_dir.join("descriptor.xml")).unwrap(),
+            original_descriptor
+        );
+    }
+
+    #[test]
+    fn compressed_protected_session_requires_unlock_and_backs_up_its_archive() {
+        let (temporary, service) = compressed_lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        let descriptor_path = save_dir.join("descriptor.xml");
+        fs::write(
+            &descriptor_path,
+            fs::read_to_string(&descriptor_path).unwrap().replace(
+                "<isIronMode>false</isIronMode>",
+                "<isIronMode>true</isIronMode>",
+            ),
+        )
+        .unwrap();
+        let snapshot = open_compressed_session(&service, &save_dir);
+        assert!(snapshot.protected_locked);
+        assert!(!snapshot.write_capability.editable);
+        assert_eq!(
+            service
+                .prepare_restore(&snapshot.session_id, &BackupId::new("missing"))
+                .unwrap_err()
+                .code,
+            ErrorCode::ProtectedSave
+        );
+        assert_eq!(
+            service
+                .unlock_protected_save(&snapshot.session_id, false)
+                .unwrap_err()
+                .code,
+            ErrorCode::ProtectedSave
+        );
+        let unlocked = service
+            .unlock_protected_save(&snapshot.session_id, true)
+            .unwrap();
+        assert!(!unlocked.protected_locked);
+        assert!(unlocked.write_capability.editable);
+        let backups = service.list_backups(&snapshot.save_id).unwrap();
+        assert_eq!(backups.len(), 1);
+        assert!(backups[0].pinned);
+        let restore = service
+            .prepare_restore(&unlocked.session_id, &backups[0].id)
+            .unwrap();
+        service.apply_restore(&restore.review_id, true).unwrap();
+        assert!(open_compressed_session(&service, &save_dir).protected_locked);
+        assert!(!save_dir.join("campaign.xml").exists());
+    }
+
+    #[test]
+    fn compressed_unsupported_version_remains_a_preview_and_cannot_restore() {
+        let (temporary, service) = compressed_lifecycle_service();
+        let save_dir = temporary.path().join("save_Ada_1");
+        let descriptor_path = save_dir.join("descriptor.xml");
+        fs::write(
+            &descriptor_path,
+            fs::read_to_string(&descriptor_path)
+                .unwrap()
+                .replace("0.98a-RC8", "0.97a-RC11"),
+        )
+        .unwrap();
+        let snapshot = open_compressed_session(&service, &save_dir);
+        assert_eq!(snapshot.summary.compatibility, CompatibilityState::Preview);
+        assert!(!snapshot.write_capability.editable);
+        assert_eq!(snapshot.character.credits, "1000");
+        assert_eq!(
+            service
+                .prepare_restore(&snapshot.session_id, &BackupId::new("missing"))
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedVersion
+        );
     }
 
     fn progression_settings_fixture(player_max_level: u32) -> String {
