@@ -36,7 +36,7 @@ env:
 jobs:
   rustsec:
     name: RustSec audit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, workstation-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the pinned Rust toolchain
@@ -54,7 +54,7 @@ jobs:
 
   npm-audit:
     name: Production npm audit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, workstation-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -71,7 +71,7 @@ jobs:
   dependency-review:
     name: Pull-request dependency review
     if: ${{ github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, workstation-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reject newly introduced vulnerable dependencies

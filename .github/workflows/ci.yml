@@ -25,7 +25,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-latest
+            runner: [self-hosted, Linux, X64, workstation-ci]
+    runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -51,7 +54,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-latest
+            runner: [self-hosted, Linux, X64, workstation-ci]
+    runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the pinned Rust toolchain
@@ -101,12 +107,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            runner: [self-hosted, Linux, X64, workstation-ci]
             name: Linux x64
             cache-key: desktop-linux
           - os: macos-latest
             name: macOS
             cache-key: desktop-macos
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Linux Tauri prerequisites
