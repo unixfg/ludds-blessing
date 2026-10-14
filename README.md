@@ -107,6 +107,18 @@ Manual save roots can be reviewed and forgotten from Settings. Automatic roots
 remain internal, and superseded save sessions and reviews are bounded and
 discarded rather than accumulating for the lifetime of the app.
 
+## Dependency updates
+
+Renovate checks dependencies daily from midnight to noon in America/Chicago,
+with at most two ordinary open PRs and four new PRs per hour. Non-major
+production, development, Rust, and GitHub Actions updates retain their groups.
+Node and pnpm updates keep package and workflow toolchain pins together.
+
+Patch, minor, and digest updates may merge after all nine required platform
+checks and any emitted security checks pass. Major upgrades remain separate
+and require manual review. Security fixes bypass the update window and
+release-age delay, while retaining the same merge checks.
+
 ## Distribution
 
 Ludd’s Blessing is free software licensed under the GNU General Public License,
