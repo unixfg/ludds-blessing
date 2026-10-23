@@ -4,10 +4,10 @@
   "version": "0.2.3",
   "license": "GPL-3.0-or-later",
   "type": "module",
-  "packageManager": "pnpm@11.19.0",
+  "packageManager": "pnpm@11.28.8",
   "engines": {
-    "node": "24.19.0",
-    "pnpm": "11.19.0"
+    "node": "24.22.1",
+    "pnpm": "11.28.8"
   },
   "scripts": {
     "dev": "vite",
