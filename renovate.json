@@ -1,0 +1,168 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "America/Chicago",
+  "schedule": [
+    "* 0-11 * * *"
+  ],
+  "updateNotScheduled": false,
+  "automerge": false,
+  "automergeType": "pr",
+  "automergeStrategy": "merge-commit",
+  "platformAutomerge": false,
+  "rebaseWhen": "conflicted",
+  "ignoreTests": false,
+  "internalChecksFilter": "strict",
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 2,
+  "labels": [
+    "dependencies"
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "addLabels": [
+      "security"
+    ],
+    "schedule": [],
+    "minimumReleaseAge": null,
+    "updateNotScheduled": true,
+    "groupName": null
+  },
+  "packageRules": [
+    {
+      "description": "Group routine GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "digest",
+        "pinDigest",
+        "patch",
+        "minor"
+      ],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "Auto-merge routine updates after required CI passes",
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pinDigest"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Keep non-major production dependencies together",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "dependencies"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "production-dependencies"
+    },
+    {
+      "description": "Keep non-major development dependencies together",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "development-dependencies"
+    },
+    {
+      "description": "Keep non-major Rust dependencies together",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "rust-dependencies"
+    },
+    {
+      "description": "Update package and workflow toolchain pins together",
+      "matchDepNames": [
+        "node",
+        "pnpm"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "node-and-pnpm-toolchains"
+    },
+    {
+      "description": "Keep major updates separate and require manual merging",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": null,
+      "automerge": false,
+      "addLabels": [
+        "major-update"
+      ]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "NODE_VERSION:\\s*(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "PNPM_VERSION:\\s*(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "pnpm",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/security\\.yml$/"
+      ],
+      "matchStrings": [
+        "cargo install cargo-audit --version (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "cargo-audit",
+      "datasourceTemplate": "crate",
+      "versioningTemplate": "semver"
+    }
+  ]
+}

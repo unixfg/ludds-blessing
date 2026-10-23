@@ -65,7 +65,8 @@ pub(crate) fn decode_campaign(
             "campaign ZIP metadata disagrees with member framing",
         ));
     }
-    if member.name_raw() != MEMBER_NAME.as_bytes() || member.name() != MEMBER_NAME {
+    let member_name = member.name().map_err(zip_error)?;
+    if member.name_raw() != MEMBER_NAME.as_bytes() || member_name != MEMBER_NAME {
         return Err(unsupported(
             "campaign ZIP member must be named campaign.xml",
         ));
@@ -83,7 +84,7 @@ pub(crate) fn decode_campaign(
         ));
     }
     let encoding = CampaignEncoding::Zip {
-        member_name: member.name().to_owned(),
+        member_name: member_name.into_owned(),
         compression: member.compression(),
     };
     let data = &bytes[layout.data];
@@ -533,7 +534,7 @@ mod tests {
         let mut archive = ZipArchive::new(Cursor::new(rewritten)).unwrap();
         assert_eq!(archive.len(), 1);
         let mut member = archive.by_index(0).unwrap();
-        assert_eq!(member.name(), MEMBER_NAME);
+        assert_eq!(member.name().unwrap(), MEMBER_NAME);
         assert_eq!(member.compression(), CompressionMethod::Deflated);
         let mut independently_read = Vec::new();
         member.read_to_end(&mut independently_read).unwrap();
@@ -555,7 +556,7 @@ mod tests {
         let encoded = encode_campaign(xml.bytes(), &encoding, 4096).unwrap();
         let mut archive = ZipArchive::new(Cursor::new(encoded)).unwrap();
         let member = archive.by_index(0).unwrap();
-        assert_eq!(member.name(), MEMBER_NAME);
+        assert_eq!(member.name().unwrap(), MEMBER_NAME);
         assert_eq!(member.compression(), CompressionMethod::Stored);
     }
 
